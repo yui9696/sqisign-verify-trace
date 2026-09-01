@@ -62,14 +62,29 @@ and `E_com`, need the isogeny and 2D-theta machinery to recompute and are not
 cross-checked here; they remain reference-observed.) Each vector now also carries
 its input `E_aux_A` so the cross-check runs from the committed data alone.
 
-Going one stage deeper: the **challenge isogeny** (`E_chall`) has also been
-reproduced in pure Python — its kernel, the `2^(f−backtracking)`-isogeny, and the
-codomain j-invariant match the reference for all 100 level-1 vectors. It is not
-yet shipped as a deterministic cross-check because one convention (the sign of
-the difference point in the reference's projective `difference_point`) is tied to
-the reference's low-level projective arithmetic; the full recipe and the precise
-obstacle are written up in
-[`docs/challenge-isogeny.md`](docs/challenge-isogeny.md).
+Going one stage deeper: the **challenge isogeny** (`E_chall`) is now reproduced
+in pure Python too — **deterministically and byte-for-byte** — by
+[`sqvtrace/challenge.py`](sqvtrace/challenge.py), which replicates the reference's
+exact projective Montgomery arithmetic so that the sign the reference's
+`difference_point` picks (which depends on its projective `Z`-coordinates) comes
+out right without any "try both signs":
+
+```
+$ sqisign-verify-trace crosscheck --echall --limit 5
+independent pure-Python cross-check of the E_chall stage
+  level 1: 5/5 match  ok
+  level 3: 5/5 match  ok
+  level 5: 5/5 match  ok
+```
+
+So **two** of the four verification curve stages (`E_aux`, `E_chall`) are now
+reproduced by an independent, self-contained, pure-Python implementation from the
+committed inputs — a step-by-step start on the readable executable reference the
+community keeps asking for. The full recipe, and why matching the reference
+required replicating its projective arithmetic, are in
+[`docs/challenge-isogeny.md`](docs/challenge-isogeny.md). (Pure Python is slow
+here — seconds per vector at level 5 — so the CLI takes a `--limit`; `E_com`, the
+theta-`(2ⁿ,2ⁿ)`-isogeny stage, is not attempted and remains reference-observed.)
 
 ## What the vectors are
 

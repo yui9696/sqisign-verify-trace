@@ -122,6 +122,8 @@ def cmd_crosscheck(args: argparse.Namespace) -> int:
         lvl = v.get("level")
         if lvl in (1, 3, 5):
             by_level[lvl].append(v)
+    if args.limit:
+        by_level = {lvl: vs[: args.limit] for lvl, vs in by_level.items()}
 
     all_ok = True
     grand_total = grand_matched = 0
@@ -137,6 +139,23 @@ def cmd_crosscheck(args: argparse.Namespace) -> int:
         for idx, exp, got in r.mismatches[:3]:
             print(f"    vec {idx}: expected {exp[:16]}... got {got[:16]}...")
     print(f"  total: {grand_matched}/{grand_total} independently reproduced")
+
+    if args.echall:
+        from .challenge import crosscheck_e_chall
+
+        print()
+        print("independent pure-Python cross-check of the E_chall stage")
+        print("  (recompute the challenge isogeny from pk/chall_coeff/backtracking)")
+        for lvl in sorted(by_level):
+            r = crosscheck_e_chall(by_level[lvl], lvl)
+            grand_total += r.total
+            grand_matched += r.matched
+            all_ok = all_ok and r.ok
+            status = "ok" if r.ok else f"FAIL ({len(r.mismatches)} mismatch)"
+            print(f"  level {lvl}: {r.matched}/{r.total} match  {status}")
+            for idx, exp, got in r.mismatches[:3]:
+                print(f"    vec {idx}: expected {exp[:16]}... got {got[:16]}...")
+
     return 0 if all_ok and grand_total > 0 else 2
 
 
@@ -201,6 +220,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="independently recompute the E_aux stage in pure Python and compare",
     )
     x.add_argument("--goldens", nargs="*", help="golden JSON files (default: vectors/)")
+    x.add_argument("--echall", action="store_true",
+                   help="also cross-check the E_chall stage (the challenge isogeny; slower)")
+    x.add_argument("--limit", type=int, default=None,
+                   help="check at most N vectors per level (E_chall in pure Python is slow)")
     x.set_defaults(func=cmd_crosscheck)
 
     c = sub.add_parser("check", help="self-consistency check of a golden set")
