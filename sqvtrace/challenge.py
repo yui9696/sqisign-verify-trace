@@ -328,6 +328,199 @@ def _isogeny_chain(E, K, n):
     return E
 
 
+# --------------------------------------------------------------------------
+# Exact replication of the reference's even-degree isogeny chain
+# (ec_eval_even_strategy in isog_chains.c): a chain of 4-isogenies with the
+# reference's balanced strategy, plus a final 2-isogeny for odd length. Working
+# in the A24 = (A+2C : 4C) projective model with the reference's exact xDBL_A24
+# / xisog_4 / xeval_4 / xisog_2 fixes the codomain's *Montgomery model*
+# (A-coefficient), not just its j-invariant — which the E_chall basis needs.
+# This is what makes E_chall_after_2resp reproducible, and it is O(n log n),
+# so it is also much faster than the naive chain above.
+# --------------------------------------------------------------------------
+def _xDBL_A24(P, A24):
+    X, Z = P
+    ax, az = A24
+    t0 = (X + Z)
+    t0 = t0 * t0
+    t1 = (X - Z)
+    t1 = t1 * t1
+    t2 = t0 - t1
+    t1 = t1 * az
+    Qx = t0 * t1
+    t0 = t2 * ax
+    t0 = t0 + t1
+    Qz = t0 * t2
+    return (Qx, Qz)
+
+
+def _xisog_4(A24, P):
+    X, Z = P
+    K0x = X * X
+    K0z = Z * Z
+    Bx = (K0z + K0x) * (K0z - K0x)
+    Bz = K0z * K0z
+    K0const = (K0z + K0z) + (K0z + K0z)  # 4 Z^2
+    return (Bx, Bz), (K0const, X - Z, X + Z)
+
+
+def _xeval_4(pts, K):
+    K0x, K1x, K2x = K
+    out = []
+    for Qx, Qz in pts:
+        t0 = Qx + Qz
+        t1 = Qx - Qz
+        Rx = t0 * K1x
+        Rz = t1 * K2x
+        t0 = t0 * t1 * K0x
+        u = Rx + Rz
+        Rz = Rx - Rz
+        u = u * u
+        Rz = Rz * Rz
+        out.append(((t0 + u) * u, Rz * (t0 - Rz)))
+    return out
+
+
+def _A24_to_AC(A24):
+    ax, az = A24
+    A = (ax + ax) - az
+    A = A + A
+    return A / az
+
+
+def eval_even_strategy(A_aff, kernel, isog_len):
+    """Codomain A-coefficient (affine) of the 2^isog_len-isogeny with the given
+    kernel, matching the reference's ec_eval_even_strategy byte-for-byte."""
+    p = A_aff.p
+    A24 = ((A_aff + Fp2(2, 0, p)) / Fp2(4, 0, p), Fp2(1, 0, p))  # normalized
+    space = 1
+    i = 1
+    while i < isog_len:
+        i *= 2
+        space += 1
+    splits = [None] * space
+    todo = [0] * space
+    splits[0] = kernel
+    todo[0] = isog_len
+    current = 0
+    for _j in range(isog_len // 2):
+        while todo[current] != 2:
+            current += 1
+            splits[current] = splits[current - 1]
+            num = todo[current - 1] // 4 * 2 + todo[current - 1] % 2
+            todo[current] = todo[current - 1] - num
+            for _ in range(num):
+                splits[current] = _xDBL_A24(splits[current], A24)
+        A24, K = _xisog_4(A24, splits[current])
+        if current > 0:
+            ev = _xeval_4(splits[0:current], K)
+            for i2 in range(current):
+                splits[i2] = ev[i2]
+                todo[i2] -= 2
+        current -= 1
+    if isog_len % 2:
+        X, Z = splits[0]
+        A24 = (Z * Z - X * X, Z * Z)
+    return _A24_to_AC(A24)
+
+
+# --------------------------------------------------------------------------
+# Full (x, y) Montgomery point arithmetic (B = 1). Used for the double-scalar
+# multiplication [a]P + [b]Q the reference does with ec_biscalar_mul when it
+# applies the challenge change-of-basis matrix. The j-invariant of the final
+# curve is model-independent, so ordinary formulas suffice here; the y-sign of
+# Q is pinned by the (already model-exact) difference point.
+# --------------------------------------------------------------------------
+def _canon_fp_sqrt(z):
+    r = z.sqrt()
+    odd = (r.a & 1) if r.a != 0 else (r.b & 1)
+    return -r if odd else r
+
+
+class FullCurve:
+    """Affine (x, y) arithmetic on B y^2 = x^3 + A x^2 + x."""
+
+    def __init__(self, A):
+        self.A = A
+        self.p = A.p
+
+    def rhs(self, x):
+        return ((x + self.A) * x + Fp2(1, 0, self.p)) * x
+
+    def lift(self, x):
+        return (x, _canon_fp_sqrt(self.rhs(x)))
+
+    def neg(self, P):
+        return None if P is None else (P[0], -P[1])
+
+    def add(self, P, Q):
+        if P is None:
+            return Q
+        if Q is None:
+            return P
+        x1, y1 = P
+        x2, y2 = Q
+        p = self.p
+        if x1 == x2 and (y1 + y2).is_zero():
+            return None
+        if x1 == x2 and y1 == y2:
+            lam = (Fp2(3, 0, p) * x1 * x1 + Fp2(2, 0, p) * self.A * x1 + Fp2(1, 0, p)) / (Fp2(2, 0, p) * y1)
+        else:
+            lam = (y2 - y1) / (x2 - x1)
+        x3 = lam * lam - self.A - x1 - x2
+        return (x3, lam * (x1 - x3) - y1)
+
+    def mul(self, k, P):
+        R = None
+        base = P
+        while k > 0:
+            if k & 1:
+                R = self.add(R, base)
+            base = self.add(base, base)
+            k >>= 1
+        return R
+
+
+def _hint_basis(A: Fp2, hint: int):
+    """The two starting basis x-coordinates from a hint, on the curve A."""
+    p = A.p
+    one = Fp2(1, 0, p)
+    hint_A = hint & 1
+    hint_P = hint >> 1
+    if hint_A:
+        xP = (-A) / (one + Fp2(0, 1, p) * Fp2(hint_P, 0, p))
+    else:
+        xP = A * Fp2(hint_P, 0, p)
+    xQ = -(A + xP)
+    return xP, xQ
+
+
+def _canonical_basis(A: Fp2, a24, hint, cof, cofbits):
+    """Return (x(P), x(diff), x(Q_orig)) in the reference's basis labelling
+    (basis.Q = diff(P,Q), basis.PmQ = Q_orig), each as an affine x-coordinate,
+    after clearing the odd cofactor with the reference's exact projective ladder."""
+    xP, xQ = _hint_basis(A, hint)
+    Pp = xmul_projective(xP, cof, cofbits, a24)
+    Qp = xmul_projective(xQ, cof, cofbits, a24)
+    xd = difference_point(Pp, Qp, A)
+    return Pp[0] / Pp[1], xd, Qp[0] / Qp[1]
+
+
+def _e_chall_curve(inp: "Inputs") -> Curve:
+    """The exact challenge curve (matching the reference's A-coefficient, not
+    just its j-invariant), via the reference's isogeny strategy."""
+    p, fp_bytes, f, cof, cofbits, sig_bytes, nb, sec = PARAMS[inp.level]
+    A = inp.A_pk
+    E = Curve(A)
+    xPa, xd, xQa = _canonical_basis(A, E.a24, inp.hint_pk, cof, cofbits)
+    ker = _ladder3pt(E, inp.chall_coeff, xPa, xd, xQa)  # P + [chall]*diff
+    kerXZ = (ker[0], ker[1])
+    for _ in range(inp.backtracking):
+        kerXZ = E.xdbl(kerXZ)
+    A_chall = eval_even_strategy(A, kerXZ, f - inp.backtracking)
+    return Curve(A_chall)
+
+
 @dataclass
 class Inputs:
     A_pk: Fp2
@@ -335,45 +528,73 @@ class Inputs:
     chall_coeff: int
     backtracking: int
     level: int
+    two_resp_length: int = 0
+    hint_chall: int = 0
+    mat: tuple = ()  # (mat00, mat01, mat10, mat11)
 
 
 def inputs_from_hex(pk_hex, sig_hex, level):
-    """Extract the E_chall inputs from a public key and a signature (hex)."""
+    """Extract the challenge/2-response inputs from a public key + signature."""
     p, fp_bytes, f, cof, cofbits, sig_bytes, nb, sec = PARAMS[level]
     pk = bytes.fromhex(pk_hex)
     sig = bytes.fromhex(sig_hex)[:sig_bytes]
     A_pk = fp2_from_bytes(pk[0 : 2 * fp_bytes], fp_bytes, p)
     hint_pk = pk[2 * fp_bytes]
     backtracking = sig[2 * fp_bytes]
+    two_resp_length = sig[2 * fp_bytes + 1]
+    hint_chall = sig[-1]
+    mo_mat = 2 * fp_bytes + 2
+    mat = tuple(
+        int.from_bytes(sig[mo_mat + j * nb : mo_mat + (j + 1) * nb], "little") for j in range(4)
+    )
     mo = 2 * fp_bytes + 2 + 4 * nb
     chall_coeff = int.from_bytes(sig[mo : mo + sec], "little")
-    return Inputs(A_pk, hint_pk, chall_coeff, backtracking, level)
+    return Inputs(A_pk, hint_pk, chall_coeff, backtracking, level, two_resp_length, hint_chall, mat)
 
 
 def recompute_e_chall(inp: Inputs) -> str:
     """Recompute the challenge-curve j-invariant (hex) from the inputs."""
+    fp_bytes = PARAMS[inp.level][1]
+    return _e_chall_curve(inp).j_invariant().to_bytes(fp_bytes).hex()
+
+
+def recompute_e_chall_after_2resp(inp: Inputs) -> str:
+    """Recompute the j-invariant after the 2-response isogeny (present only when
+    two_resp_length > 0). Uses the exact E_chall curve, rebuilds the challenge
+    basis, applies the change-of-basis matrix, and takes the small isogeny."""
     p, fp_bytes, f, cof, cofbits, sig_bytes, nb, sec = PARAMS[inp.level]
-    A = inp.A_pk
-    E = Curve(A)
-    one = Fp2(1, 0, p)
-    hint_A = inp.hint_pk & 1
-    hint_P = inp.hint_pk >> 1
-    i_unit = Fp2(0, 1, p)
-    if hint_A:
-        xP = (-A) / (one + i_unit * Fp2(hint_P, 0, p))
+    resp_len = f - 2  # SQIsign_response_length = TORSION_EVEN_POWER - 2
+    two_resp = inp.two_resp_length
+    if two_resp == 0:
+        raise ValueError("no 2-response isogeny for two_resp_length == 0")
+    pow_dim2 = resp_len - two_resp - inp.backtracking
+    Echall = _e_chall_curve(inp)
+    Ac = Echall.A
+    a, c, b, d = inp.mat  # mat[0][0], mat[0][1], mat[1][0], mat[1][1]
+    bP, bQ, bPmQ = _canonical_basis(Ac, Echall.a24, inp.hint_chall, cof, cofbits)
+    db = f - pow_dim2 - 2 - two_resp
+    for _ in range(db):
+        P = Echall.xdbl((bP, Fp2(1, 0, p)))
+        bP = P[0] / P[1]
+        Q = Echall.xdbl((bQ, Fp2(1, 0, p)))
+        bQ = Q[0] / Q[1]
+        M = Echall.xdbl((bPmQ, Fp2(1, 0, p)))
+        bPmQ = M[0] / M[1]
+    FC = FullCurve(Ac)
+    Pf = FC.lift(bP)
+    yq0 = _canon_fp_sqrt(FC.rhs(bQ))
+    Qf = (bQ, yq0)
+    for yq in (yq0, -yq0):
+        if FC.add(Pf, FC.neg((bQ, yq)))[0] == bPmQ:
+            Qf = (bQ, yq)
+            break
+    # kernel base point per the reference's parity rule
+    if a % 2 == 0 and b % 2 == 0:
+        k0 = FC.add(FC.mul(c, Pf), FC.mul(d, Qf))  # basis.Q = [c]P + [d]Q
     else:
-        xP = A * Fp2(hint_P, 0, p)
-    xQ = -(A + xP)
-    # clear the odd cofactor with the reference's exact projective ladder
-    Pp = xmul_projective(xP, cof, cofbits, E.a24)
-    Qp = xmul_projective(xQ, cof, cofbits, E.a24)
-    xPa = Pp[0] / Pp[1]
-    xQa = Qp[0] / Qp[1]
-    xd = difference_point(Pp, Qp, A)
-    ker = _ladder3pt(E, inp.chall_coeff, xPa, xd, xQa)
-    if inp.backtracking:
-        ker = E.ladder(1 << inp.backtracking, ker)
-    codomain = _isogeny_chain(E, ker, f - inp.backtracking)
+        k0 = FC.add(FC.mul(a, Pf), FC.mul(b, Qf))  # basis.P = [a]P + [b]Q
+    ker = Echall.ladder(1 << (pow_dim2 + 2), (k0[0], Fp2(1, 0, p)))
+    codomain = _isogeny_chain(Echall, ker, two_resp)
     return codomain.j_invariant().to_bytes(fp_bytes).hex()
 
 
@@ -389,24 +610,59 @@ class CrossCheckResult:
         return self.total > 0 and self.matched == self.total
 
 
+def _inputs_from_vector(v, level):
+    """Build Inputs from a golden vector. Prefers the full ``sig`` (so all of
+    two_resp/hint_chall/mat are available); falls back to pk + chall_coeff +
+    backtracking for the E_chall-only inputs."""
+    pk = v.get("pk")
+    if pk is None:
+        return None
+    if v.get("sig"):
+        return inputs_from_hex(pk, v["sig"], level)
+    if "chall_coeff" not in v:
+        return None
+    fpb, prime = PARAMS[level][1], PARAMS[level][0]
+    return Inputs(
+        A_pk=fp2_from_bytes(bytes.fromhex(pk)[: 2 * fpb], fpb, prime),
+        hint_pk=bytes.fromhex(pk)[2 * fpb],
+        chall_coeff=int(v["chall_coeff"], 16) if isinstance(v["chall_coeff"], str) else v["chall_coeff"],
+        backtracking=v["backtracking"],
+        level=level,
+    )
+
+
 def crosscheck_e_chall(vectors, level: int) -> CrossCheckResult:
     """Recompute E_chall for every vector that carries the inputs and compare."""
     total = matched = 0
     mismatches = []
     for v in vectors:
-        pk = v.get("pk")
         expected = v.get("E_chall")
-        if pk is None or expected is None or "chall_coeff" not in v:
+        inp = _inputs_from_vector(v, level)
+        if inp is None or expected is None:
             continue
         total += 1
-        inp = Inputs(
-            A_pk=fp2_from_bytes(bytes.fromhex(pk)[: 2 * PARAMS[level][1]], PARAMS[level][1], PARAMS[level][0]),
-            hint_pk=bytes.fromhex(pk)[2 * PARAMS[level][1]],
-            chall_coeff=int(v["chall_coeff"], 16) if isinstance(v["chall_coeff"], str) else v["chall_coeff"],
-            backtracking=v["backtracking"],
-            level=level,
-        )
         got = recompute_e_chall(inp)
+        if got == expected:
+            matched += 1
+        else:
+            mismatches.append((v.get("index"), expected, got))
+    return CrossCheckResult(level=level, total=total, matched=matched, mismatches=mismatches)
+
+
+def crosscheck_e_chall_after_2resp(vectors, level: int) -> CrossCheckResult:
+    """Recompute E_chall_after_2resp for every vector that has it (needs the
+    full ``sig`` for the mat / hint_chall / two_resp inputs)."""
+    total = matched = 0
+    mismatches = []
+    for v in vectors:
+        expected = v.get("E_chall_after_2resp")
+        if expected is None or not v.get("sig"):
+            continue
+        inp = inputs_from_hex(v["pk"], v["sig"], level)
+        if inp.two_resp_length == 0:
+            continue
+        total += 1
+        got = recompute_e_chall_after_2resp(inp)
         if got == expected:
             matched += 1
         else:

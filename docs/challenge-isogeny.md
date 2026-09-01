@@ -87,16 +87,52 @@ in CI for speed). No "try both signs", no golden needed to disambiguate — the
 inputs (`pk`, `chall_coeff`, `backtracking`, all carried in the committed
 vectors) determine the output.
 
+## Getting the Montgomery *model* right, not just the j-invariant
+
+A first version of `E_chall` computed its codomain with a naive chain of
+2-isogenies. That reproduces the golden `E_chall` (a j-invariant, which is
+model-independent) but produces a curve that is *isomorphic to*, yet not the same
+Montgomery model as, the reference's — its A-coefficient differs. That is
+invisible for `E_chall` itself, but it breaks the **next** stage, because the
+next stage builds a torsion basis on `E_chall`, and a basis depends on the exact
+A-coefficient.
+
+So `challenge.py` reproduces the reference's isogeny **model-exactly**, by
+porting `ec_eval_even_strategy` (`isog_chains.c`): a balanced chain of
+**4-isogenies** (`xisog_4` / `xeval_4`) plus a final 2-isogeny for odd length,
+in the `A24 = (A+2C : 4C)` projective world with the reference's exact
+`xDBL_A24`, finishing with `A24_to_AC`. This lands on the reference's
+A-coefficient byte-for-byte (verified against instrumented dumps of `E_chall.A`),
+and — being `O(n log n)` — is also far faster than the naive chain.
+
+## The 2-response isogeny (`E_chall_after_2resp`)
+
+With the exact `E_chall` model in hand, the next stage follows:
+
+1. Rebuild the canonical basis on `E_chall` from `hint_chall` (same routine,
+   same basis relabelling: `basis.Q = diff(P,Q)`, `basis.PmQ = Q_orig`).
+2. Double it to the right order, then apply the signature's change-of-basis
+   matrix `mat_Bchall_can_to_B_chall` — a double-scalar `[a]P + [b]Q`, done here
+   with full `(x, y)` point arithmetic whose relative y-sign is pinned by the
+   (model-exact) difference point.
+3. Pick the kernel point by the reference's matrix-parity rule, double it to
+   order `2^two_resp_length`, and take the small `2^two_resp_length`-isogeny.
+
+`recompute_e_chall_after_2resp` matches the reference for every vector that has a
+2-response stage, at all three levels (`crosscheck --echall`).
+
 ## Status of the independent reproduction
 
 - `E_aux`: independent, deterministic, self-contained — 300/300 (`crosscheck`).
-- `E_chall`: independent, deterministic, self-contained — reproduced at all three
-  levels (`crosscheck --echall`), by replicating the reference's projective
-  arithmetic. **This is the stage this note is about; it is done.**
+- `E_chall`: independent, deterministic, **model-exact** — all three levels
+  (`crosscheck --echall`).
+- `E_chall_after_2resp`: independent, deterministic — all three levels, for every
+  vector that has this stage.
 - `E_com`: the recovered commitment curve is the codomain of the theta
   `(2ⁿ,2ⁿ)`-isogeny (spec §8.5) — a different and heavier machine, not attempted
   here; it remains reference-observed.
 
-Two of the four curve stages of SQIsign verification are now reproduced by an
-independent pure-Python implementation, which is the standard the community asked
-for (a readable, correct, executable reference), stage by stage.
+**Three of the four curve stages of SQIsign verification are now reproduced by an
+independent, self-contained pure-Python implementation** — the readable, correct,
+executable reference the community keeps asking for, stage by stage. Only the
+dimension-2 theta isogeny (`E_com`) is left.

@@ -62,29 +62,35 @@ and `E_com`, need the isogeny and 2D-theta machinery to recompute and are not
 cross-checked here; they remain reference-observed.) Each vector now also carries
 its input `E_aux_A` so the cross-check runs from the committed data alone.
 
-Going one stage deeper: the **challenge isogeny** (`E_chall`) is now reproduced
-in pure Python too — **deterministically and byte-for-byte** — by
-[`sqvtrace/challenge.py`](sqvtrace/challenge.py), which replicates the reference's
-exact projective Montgomery arithmetic so that the sign the reference's
-`difference_point` picks (which depends on its projective `Z`-coordinates) comes
-out right without any "try both signs":
+Going deeper, the **challenge isogeny** (`E_chall`) and the **2-response
+isogeny** (`E_chall_after_2resp`) are reproduced in pure Python too —
+**deterministically and byte-for-byte** — by
+[`sqvtrace/challenge.py`](sqvtrace/challenge.py). Matching the reference here
+meant replicating its exact projective Montgomery arithmetic (so the sign its
+`difference_point` picks comes out right) *and* its exact isogeny **strategy**
+(a balanced 4-isogeny chain), so that `E_chall` matches the reference's
+Montgomery *model* — its A-coefficient — not just its j-invariant. That model
+match is what makes the next stage's torsion basis, and hence
+`E_chall_after_2resp`, come out right:
 
 ```
 $ sqisign-verify-trace crosscheck --echall --limit 5
 independent pure-Python cross-check of the E_chall stage
   level 1: 5/5 match  ok
-  level 3: 5/5 match  ok
-  level 5: 5/5 match  ok
+  ...
+independent pure-Python cross-check of the E_chall_after_2resp stage
+  level 1: 5/5 match  ok
+  ...
 ```
 
-So **two** of the four verification curve stages (`E_aux`, `E_chall`) are now
-reproduced by an independent, self-contained, pure-Python implementation from the
-committed inputs — a step-by-step start on the readable executable reference the
-community keeps asking for. The full recipe, and why matching the reference
-required replicating its projective arithmetic, are in
-[`docs/challenge-isogeny.md`](docs/challenge-isogeny.md). (Pure Python is slow
-here — seconds per vector at level 5 — so the CLI takes a `--limit`; `E_com`, the
-theta-`(2ⁿ,2ⁿ)`-isogeny stage, is not attempted and remains reference-observed.)
+So **three** of the four verification curve stages (`E_aux`, `E_chall`,
+`E_chall_after_2resp`) are now reproduced by an independent, self-contained,
+pure-Python implementation from the committed inputs — a step-by-step start on
+the readable executable reference the community keeps asking for. The full recipe
+is in [`docs/challenge-isogeny.md`](docs/challenge-isogeny.md). (The `O(n log n)`
+strategy keeps it fast; the CLI still takes a `--limit`. Only `E_com`, the
+theta-`(2ⁿ,2ⁿ)`-isogeny stage, is left — it is not attempted and remains
+reference-observed.)
 
 ## What the vectors are
 

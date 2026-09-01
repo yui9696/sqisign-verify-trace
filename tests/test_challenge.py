@@ -1,9 +1,9 @@
-"""The E_chall stage is independently and deterministically reproducible.
+"""E_chall and E_chall_after_2resp are independently, deterministically reproduced.
 
-Pure Python reproduces the challenge isogeny byte-for-byte by replicating the
-reference's projective arithmetic. Full 300-vector reproduction is slow in pure
-Python, so the test checks a small subset per level; the CLI can run more
-(`sqisign-verify-trace crosscheck --echall`).
+Pure Python reproduces the challenge isogeny (via the reference's exact
+4-isogeny strategy, so the codomain's Montgomery model matches — not just its
+j-invariant) and the 2-response isogeny on top of it. The strategy is
+O(n log n), so the cross-checks are fast enough to run a good subset in CI.
 """
 
 import json
@@ -12,12 +12,12 @@ from pathlib import Path
 import pytest
 
 from sqvtrace.challenge import (
-    Inputs,
+    PARAMS,
     crosscheck_e_chall,
-    fp2_from_bytes,
+    crosscheck_e_chall_after_2resp,
     inputs_from_hex,
     recompute_e_chall,
-    PARAMS,
+    recompute_e_chall_after_2resp,
 )
 
 VEC = Path(__file__).resolve().parents[1] / "vectors"
@@ -32,31 +32,39 @@ def test_primes_are_3_mod_4(level):
     assert PARAMS[level][0] % 4 == 3
 
 
-@pytest.mark.parametrize("level,n", [(1, 3), (3, 2), (5, 1)])
+@pytest.mark.parametrize("level,n", [(1, 8), (3, 4), (5, 2)])
 def test_e_chall_crosscheck_subset(level, n):
-    vectors = _load(level)[:n]
-    r = crosscheck_e_chall(vectors, level)
+    r = crosscheck_e_chall(_load(level)[:n], level)
     assert r.total == n
     assert r.ok, r.mismatches[:3]
 
 
+@pytest.mark.parametrize("level,n", [(1, 8), (3, 4), (5, 2)])
+def test_e_chall_after_2resp_crosscheck_subset(level, n):
+    # Not every vector has a 2-response stage; check those that do.
+    r = crosscheck_e_chall_after_2resp(_load(level)[:n], level)
+    assert r.total >= 1
+    assert r.ok, r.mismatches[:3]
+
+
 def test_e_chall_deterministic_no_trial():
-    # Two runs of the same input give the same byte string (no randomness,
-    # no "try both signs").
     v = _load(1)[0]
-    inp = Inputs(
-        A_pk=fp2_from_bytes(bytes.fromhex(v["pk"])[: 2 * 32], 32, PARAMS[1][0]),
-        hint_pk=bytes.fromhex(v["pk"])[2 * 32],
-        chall_coeff=int(v["chall_coeff"], 16),
-        backtracking=v["backtracking"],
-        level=1,
-    )
+    inp = inputs_from_hex(v["pk"], v["sig"], 1)
     assert recompute_e_chall(inp) == recompute_e_chall(inp) == v["E_chall"]
+
+
+def test_after_2resp_needs_exact_model():
+    # A vector with a 2-response stage reproduces exactly.
+    for v in _load(1):
+        inp = inputs_from_hex(v["pk"], v["sig"], 1)
+        if inp.two_resp_length > 0 and "E_chall_after_2resp" in v:
+            assert recompute_e_chall_after_2resp(inp) == v["E_chall_after_2resp"]
+            return
+    pytest.skip("no two-response vector found")
 
 
 def test_wrong_challenge_changes_e_chall():
     v = _load(1)[0]
-    inp = inputs_from_hex(v["pk"], v["E_aux_A"] + "00" * (148 - 32), 1)  # dummy sig
-    inp.chall_coeff = (int(v["chall_coeff"], 16) ^ 1)
-    inp.backtracking = v["backtracking"]
+    inp = inputs_from_hex(v["pk"], v["sig"], 1)
+    inp.chall_coeff ^= 1
     assert recompute_e_chall(inp) != v["E_chall"]

@@ -141,13 +141,26 @@ def cmd_crosscheck(args: argparse.Namespace) -> int:
     print(f"  total: {grand_matched}/{grand_total} independently reproduced")
 
     if args.echall:
-        from .challenge import crosscheck_e_chall
+        from .challenge import crosscheck_e_chall, crosscheck_e_chall_after_2resp
 
         print()
         print("independent pure-Python cross-check of the E_chall stage")
-        print("  (recompute the challenge isogeny from pk/chall_coeff/backtracking)")
+        print("  (the challenge isogeny, via the reference's exact 4-isogeny strategy)")
         for lvl in sorted(by_level):
             r = crosscheck_e_chall(by_level[lvl], lvl)
+            grand_total += r.total
+            grand_matched += r.matched
+            all_ok = all_ok and r.ok
+            status = "ok" if r.ok else f"FAIL ({len(r.mismatches)} mismatch)"
+            print(f"  level {lvl}: {r.matched}/{r.total} match  {status}")
+            for idx, exp, got in r.mismatches[:3]:
+                print(f"    vec {idx}: expected {exp[:16]}... got {got[:16]}...")
+
+        print()
+        print("independent pure-Python cross-check of the E_chall_after_2resp stage")
+        print("  (the 2-response isogeny; needs the exact E_chall Montgomery model)")
+        for lvl in sorted(by_level):
+            r = crosscheck_e_chall_after_2resp(by_level[lvl], lvl)
             grand_total += r.total
             grand_matched += r.matched
             all_ok = all_ok and r.ok
