@@ -196,8 +196,45 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return 0 if rep.clean else 3
 
 
+def _print_explain(pk, sig, msg_bytes, level):
+    from .verify import verify_trace
+
+    tr = verify_trace(pk, sig, msg_bytes, level)
+    order = ["E_aux", "E_chall", "E_chall_after_2resp", "E_com"]
+    steps = {
+        "E_aux": "auxiliary curve, decoded from the signature",
+        "E_chall": "challenge isogeny off the public-key curve",
+        "E_chall_after_2resp": "after the 2^r two-response isogeny",
+        "E_com": "commitment curve = dimension-2 theta (2^n,2^n)-isogeny codomain",
+    }
+    print(f"pure-Python verification, level {level}:\n")
+    for k in order:
+        if k in tr:
+            h = tr[k]
+            print(f"  {k:20s} j = {h[:16]}…{h[-8:]}   ({steps[k]})")
+    print()
+    print("  challenge = hash_to_challenge(j(pk), j(E_com), msg)")
+    print(f"    recomputed : {tr['chall']:#x}")
+    print(f"    signature  : {tr['sig_chall']:#x}")
+    print()
+    verdict = "ACCEPT" if tr["accept"] else "REJECT"
+    print(f"  => {verdict}  (challenge {'==' if tr['accept'] else '!='} sig.chall_coeff)")
+    return 0 if tr["accept"] else 1
+
+
 def cmd_verify(args: argparse.Namespace) -> int:
     from .verify import verify_signature
+
+    if args.explain:
+        if args.kat:
+            recs = parse_kat(args.kat)
+            pk, msg, sig = kat_signature(recs[0])
+            return _print_explain(pk, sig, bytes.fromhex(msg) if msg else b"", args.level)
+        if args.pk and args.sig:
+            return _print_explain(args.pk, args.sig,
+                                  bytes.fromhex(args.msg) if args.msg else b"", args.level)
+        print("--explain needs --kat FILE, or --pk/--sig/--msg", file=sys.stderr)
+        return 1
 
     if args.kat:
         records = parse_kat(args.kat)
@@ -303,6 +340,8 @@ def build_parser() -> argparse.ArgumentParser:
     ver.add_argument("--pk", help="public key (hex) for a single verification")
     ver.add_argument("--sig", help="signature (hex) for a single verification")
     ver.add_argument("--msg", help="message (hex) for a single verification", default="")
+    ver.add_argument("--explain", action="store_true",
+                     help="print a stage-by-stage pure-Python walkthrough of one verification")
     ver.set_defaults(func=cmd_verify)
 
     w = sub.add_parser("walkthrough", help="print the level-1 vector-0 worked example")

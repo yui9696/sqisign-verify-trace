@@ -20,7 +20,14 @@ from __future__ import annotations
 
 import hashlib
 
-from .challenge import Curve, PARAMS, RESP_LEN, inputs_from_hex
+from .challenge import (
+    Curve,
+    PARAMS,
+    RESP_LEN,
+    inputs_from_hex,
+    recompute_e_chall,
+    recompute_e_chall_after_2resp,
+)
 from .theta import ecom_curve
 
 # Per-level (security bits, hash iterations); FP2 encoding and the torsion power
@@ -78,3 +85,30 @@ def verify_signature(pk_hex: str, sig_hex: str, message: bytes, level: int) -> b
         # KAT vectors recompute cleanly); anything that does is rejected, as the
         # reference likewise returns 0 for such inputs.
         return False
+
+
+def verify_trace(pk_hex: str, sig_hex: str, message: bytes, level: int) -> dict:
+    """Run the verifier on a (known-good) signature and return every stage's
+    value plus the final decision -- for a readable, pure-Python walkthrough.
+
+    Unlike :func:`verify_signature` this does not swallow exceptions: it is meant
+    for demonstrating the pipeline on a valid signature, where every stage
+    computes cleanly. Returns a dict with hex j-invariants for each curve stage
+    (``E_aux``, ``E_chall``, optionally ``E_chall_after_2resp``, ``E_com``), the
+    recomputed challenge ``chall`` and the signature's ``sig_chall`` (both ints),
+    and ``accept`` (bool)."""
+    inp = inputs_from_hex(pk_hex, sig_hex, level)
+    fp_bytes = PARAMS[level][1]
+    out = {"E_aux": Curve(inp.A_aux).j_invariant().to_bytes(fp_bytes).hex(),
+           "E_chall": recompute_e_chall(inp)}
+    if inp.two_resp_length > 0:
+        out["E_chall_after_2resp"] = recompute_e_chall_after_2resp(inp)
+    E_com = ecom_curve(inp)
+    out["E_com"] = E_com.j_invariant().to_bytes(fp_bytes).hex()
+    j_pk = Curve(inp.A_pk).j_invariant().to_bytes(fp_bytes)
+    j_com = E_com.j_invariant().to_bytes(fp_bytes)
+    chall = hash_to_challenge(j_pk, j_com, message, level)
+    out["chall"] = chall
+    out["sig_chall"] = inp.chall_coeff
+    out["accept"] = chall == inp.chall_coeff
+    return out

@@ -11,11 +11,16 @@ from pathlib import Path
 import pytest
 
 from sqvtrace.challenge import PARAMS
-from sqvtrace.verify import hash_to_challenge, verify_signature
+from sqvtrace.verify import hash_to_challenge, verify_signature, verify_trace
 
-CASES = json.loads(
-    (Path(__file__).resolve().parent / "fixtures" / "verify_cases.json").read_text()
-)["cases"]
+FIX = Path(__file__).resolve().parent / "fixtures" / "verify_cases.json"
+CASES = json.loads(FIX.read_text())["cases"]
+VEC = Path(__file__).resolve().parents[1] / "vectors"
+
+
+def _golden(level, index):
+    vecs = json.loads((VEC / f"goldens-lvl{level}.json").read_text())["vectors"]
+    return next(v for v in vecs if v.get("index") == index)
 
 
 def _ids(cases):
@@ -52,3 +57,17 @@ def test_hash_to_challenge_is_deterministic():
     a = hash_to_challenge(z, z, b"msg", c["level"])
     b = hash_to_challenge(z, z, b"msg", c["level"])
     assert a == b and isinstance(a, int)
+
+
+@pytest.mark.parametrize("c", CASES, ids=_ids(CASES))
+def test_verify_trace_stages_match_goldens(c):
+    # The pure-Python walkthrough recomputes every stage; each must match the
+    # committed golden, and the run must accept.
+    tr = verify_trace(c["pk"], c["sig"], bytes.fromhex(c["msg"]), c["level"])
+    g = _golden(c["level"], c["index"])
+    assert tr["E_aux"] == g["E_aux"]
+    assert tr["E_chall"] == g["E_chall"]
+    assert tr["E_com"] == g["E_com"]
+    if "E_chall_after_2resp" in tr:
+        assert tr["E_chall_after_2resp"] == g["E_chall_after_2resp"]
+    assert tr["accept"] is True

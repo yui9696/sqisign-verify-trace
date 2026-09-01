@@ -142,6 +142,25 @@ SQIsign verifier in pure Python** — stdlib only, no C, no dependencies. Like t
 reference it mirrors, it is a reference for reading and interop, **not** a
 hardened or constant-time implementation.
 
+`--explain` prints the whole verification stage by stage, all computed from
+scratch in Python (each value matches the committed golden):
+
+```console
+$ sqisign-verify-trace verify --level 1 --explain --kat PQCsignKAT_353_SQIsign_lvl1.rsp
+pure-Python verification, level 1:
+
+  E_aux                j = 62f03428c9f28d00…2439c03   (auxiliary curve, decoded from the signature)
+  E_chall              j = b725cea1afea7c8c…6be2c00   (challenge isogeny off the public-key curve)
+  E_chall_after_2resp  j = 0fcb1d24a194b7d0…4c83b00   (after the 2^r two-response isogeny)
+  E_com                j = 242a8d147ac826d9…6282701   (commitment curve = dimension-2 theta (2^n,2^n)-isogeny codomain)
+
+  challenge = hash_to_challenge(j(pk), j(E_com), msg)
+    recomputed : 0x130ab2283ee51650adb8a014734ff6e
+    signature  : 0x130ab2283ee51650adb8a014734ff6e
+
+  => ACCEPT  (challenge == sig.chall_coeff)
+```
+
 ## What the vectors are
 
 Five stages of `protocols_verify`, captured per KAT vector:
