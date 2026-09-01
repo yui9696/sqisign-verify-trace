@@ -129,10 +129,49 @@ With the exact `E_chall` model in hand, the next stage follows:
 - `E_chall_after_2resp`: independent, deterministic — all three levels, for every
   vector that has this stage.
 - `E_com`: the recovered commitment curve is the codomain of the theta
-  `(2ⁿ,2ⁿ)`-isogeny (spec §8.5) — a different and heavier machine, not attempted
-  here; it remains reference-observed.
+  `(2ⁿ,2ⁿ)`-isogeny (spec §8.5) — a different and heavier machine. The curve
+  itself is **still reference-observed**, but its first stage is now reproduced:
+  see below.
 
 **Three of the four curve stages of SQIsign verification are now reproduced by an
 independent, self-contained pure-Python implementation** — the readable, correct,
-executable reference the community keeps asking for, stage by stage. Only the
-dimension-2 theta isogeny (`E_com`) is left.
+executable reference the community keeps asking for, stage by stage. The
+dimension-2 theta isogeny (`E_com`) is the remaining stage, and it is being built
+milestone by milestone.
+
+## `E_com`, milestone 1: the theta-isogeny kernel bases
+
+The theta `(2ⁿ,2ⁿ)`-isogeny that recovers `E_com` starts from a kernel given by
+two bases — `B_chall_can` on the challenge factor and `B_aux_can` on the
+auxiliary factor — which the reference `lift_basis` turns into Jacobian points
+(the inputs to `_theta_chain_compute_impl`). `commitment_kernel_bases` in
+[`sqvtrace/challenge.py`](../sqvtrace/challenge.py) reproduces those bases in
+pure Python:
+
+- each factor's canonical basis is rebuilt from its hint (`hint_chall`,
+  `hint_aux`) and doubled to the exact kernel order `2^(pow_dim2 + 2)` with
+  `pow_dim2 = SQIsign_response_length − two_resp − backtracking`;
+- `B_chall_can` then gets the signature's change-of-basis matrix applied
+  (`P' = [a]P + [b]Q`, `Q' = [c]P + [d]Q`, `(P−Q)' = P' − Q'`).
+
+This is validated **byte-for-byte** against instrumented dumps of the reference's
+`lift_basis` output: the `P` points match as full Jacobian `X/Y/Z` (the reference
+normalises them to `Z = 1` and recovers `y` with the canonical even-real-part
+square root), and the `Q` points match by affine `x` (their Jacobian
+representative is input-dependent, via Okeya–Sakurai, so only the affine point is
+representative-independent). `tests/test_challenge.py` additionally pins the
+intrinsic structure with no reference data: every kernel point lies on its curve,
+has exact order `2^(pow_dim2 + 2)`, and satisfies `P − Q = PmQ`.
+
+Getting these bases right also surfaced a latent constant bug: the 2-response
+stage had used `response_length = f − 2` where the reference constant is
+`126 / 192 / 253`. That was invisible to `E_chall_after_2resp` (both land on the
+same 2-response kernel) but wrong for the theta kernel's exact order.
+
+Only the `two_resp = 0` challenge factor is reproduced so far. When
+`two_resp > 0`, `B_chall_can` lives on `E_chall_after_2resp` and must be pushed
+through the 2-response isogeny first; `commitment_kernel_bases` raises
+`NotImplementedError` there rather than guess — that push, then the gluing step,
+are the next milestones. The theta `(2,2)`-isogeny chain (gluing → strategy of
+`(2,2)`-steps → splitting) that consumes these bases is not implemented yet, so
+`E_com` itself remains reference-observed.

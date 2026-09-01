@@ -477,6 +477,8 @@ class FullCurve:
         return (x3, lam * (x1 - x3) - y1)
 
     def mul(self, k, P):
+        if k < 0:
+            return self.mul(-k, self.neg(P))
         R = None
         base = P
         while k > 0:
@@ -537,6 +539,8 @@ class Inputs:
     two_resp_length: int = 0
     hint_chall: int = 0
     mat: tuple = ()  # (mat00, mat01, mat10, mat11)
+    A_aux: "Fp2 | None" = None  # E_aux A-coefficient (sig->E_aux_A)
+    hint_aux: int = 0  # basis hint for E_aux (sig[-2])
 
 
 def inputs_from_hex(pk_hex, sig_hex, level):
@@ -555,7 +559,10 @@ def inputs_from_hex(pk_hex, sig_hex, level):
     )
     mo = 2 * fp_bytes + 2 + 4 * nb
     chall_coeff = int.from_bytes(sig[mo : mo + sec], "little")
-    return Inputs(A_pk, hint_pk, chall_coeff, backtracking, level, two_resp_length, hint_chall, mat)
+    A_aux = fp2_from_bytes(sig[0 : 2 * fp_bytes], fp_bytes, p)
+    hint_aux = sig[-2]
+    return Inputs(A_pk, hint_pk, chall_coeff, backtracking, level, two_resp_length,
+                  hint_chall, mat, A_aux, hint_aux)
 
 
 def recompute_e_chall(inp: Inputs) -> str:
@@ -602,6 +609,89 @@ def recompute_e_chall_after_2resp(inp: Inputs) -> str:
     ker = Echall.ladder(1 << (pow_dim2 + 2), (k0[0], Fp2(1, 0, p)))
     codomain = _isogeny_chain(Echall, ker, two_resp)
     return codomain.j_invariant().to_bytes(fp_bytes).hex()
+
+
+# HD_extra_torsion for the dimension-2 theta isogeny (reference constant).
+HD_EXTRA_TORSION = 2
+
+
+def commitment_kernel_bases(inp: Inputs):
+    """The kernel bases of the dimension-2 theta isogeny that recovers ``E_com``
+    -- i.e. the ``lift_basis`` inputs of the reference's
+    ``_theta_chain_compute_impl``.
+
+    Returns a dict giving, for each elliptic factor, the three affine points
+    (``P``, ``Q``, ``PmQ``) that the reference lifts to Jacobian kernel points:
+    ``B_chall_can`` on the challenge factor (``E_chall``) and ``B_aux_can`` on
+    the auxiliary factor (``E_aux``). Each has exact order ``2**order_exp`` with
+    ``order_exp = pow_dim2 + HD_extra_torsion`` and
+    ``pow_dim2 = response_length - two_resp - backtracking``.
+
+    These are validated byte-for-byte against the reference's instrumented
+    ``lift_basis`` dumps (the ``P`` points as full X/Y/Z with Z=1; the ``Q``
+    points by affine x, since their Jacobian representative is input-dependent).
+    This is the first, verified step of ``E_com``; the theta ``(2,2)``-isogeny
+    chain that consumes these bases is not implemented here.
+
+    The ``two_resp_length > 0`` case -- where ``B_chall_can`` lives on
+    ``E_chall_after_2resp`` and must be pushed through the 2-response isogeny --
+    is not yet reproduced and raises ``NotImplementedError``.
+    """
+    p, fp_bytes, f, cof, cofbits, sig_bytes, nb, sec = PARAMS[inp.level]
+    resp_len = RESP_LEN[inp.level]
+    pow_dim2 = resp_len - inp.two_resp_length - inp.backtracking
+    order_exp = pow_dim2 + HD_EXTRA_TORSION
+    one = Fp2(1, 0, p)
+
+    def _xd(E, x):
+        R = E.xdbl((x, one))
+        return R[0] / R[1]
+
+    def _doubled_basis(E, hint):
+        bP, bQ, bPmQ = _canonical_basis(E.A, E.a24, hint, cof, cofbits)
+        for _ in range(f - order_exp):
+            bP, bQ, bPmQ = _xd(E, bP), _xd(E, bQ), _xd(E, bPmQ)
+        return bP, bQ, bPmQ
+
+    def _pin(FC, xP, xQ, xPmQ):
+        """Lift x(P), x(Q) to full points with the relative y-sign fixed so that
+        (P - Q) has x-coordinate xPmQ (the reference's difference point)."""
+        Pf = FC.lift(xP)  # P: canonical even-real-part sqrt (matches lift_basis)
+        y0 = _canon_fp_sqrt(FC.rhs(xQ))
+        for yq in (y0, -y0):
+            if FC.add(Pf, FC.neg((xQ, yq)))[0] == xPmQ:
+                return Pf, (xQ, yq)
+        raise RuntimeError("difference point does not match either y-sign of Q")
+
+    # --- auxiliary factor: canonical basis on E_aux, no change-of-basis matrix.
+    Eaux = Curve(inp.A_aux)
+    FCa = FullCurve(inp.A_aux)
+    aP, aQ, aPmQ_x = _doubled_basis(Eaux, inp.hint_aux)
+    aPf, aQf = _pin(FCa, aP, aQ, aPmQ_x)
+    aPmQf = FCa.add(aPf, FCa.neg(aQf))
+
+    # --- challenge factor.
+    if inp.two_resp_length != 0:
+        raise NotImplementedError(
+            "commitment kernel for two_resp_length > 0 (B_chall_can lives on "
+            "E_chall_after_2resp) is not yet reproduced")
+    Echall = _e_chall_curve(inp)
+    FCc = FullCurve(Echall.A)
+    a, c, b, d = inp.mat
+    cP, cQ, cPmQ_x = _doubled_basis(Echall, inp.hint_chall)
+    cPf, cQf = _pin(FCc, cP, cQ, cPmQ_x)
+    # B_chall_can via the reference's change-of-basis matrix:
+    #   P' = [a]P + [b]Q, Q' = [c]P + [d]Q, (P-Q)' = [a-c]P + [b-d]Q
+    bcP = FCc.add(FCc.mul(a, cPf), FCc.mul(b, cQf))
+    bcQ = FCc.add(FCc.mul(c, cPf), FCc.mul(d, cQf))
+    bcPmQ = FCc.add(bcP, FCc.neg(bcQ))  # (P - Q)' = [a-c]P + [b-d]Q
+
+    return {
+        "pow_dim2": pow_dim2,
+        "order_exp": order_exp,
+        "aux": {"A": inp.A_aux, "P": aPf, "Q": aQf, "PmQ": aPmQf},
+        "chall": {"A": Echall.A, "P": bcP, "Q": bcQ, "PmQ": bcPmQ},
+    }
 
 
 @dataclass
