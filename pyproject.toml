@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sqisign-verify-trace"
+version = "0.1.0"
+description = "Golden intermediate-value vectors for SQIsign verification, and a tool to produce and cross-check them."
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Moe Tabei", email = "tabei@ryun.jp" }]
+keywords = ["sqisign", "post-quantum", "isogeny", "verification", "golden-vectors", "interoperability"]
+classifiers = [
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Security :: Cryptography",
+    "Intended Audience :: Developers",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+
+[project.urls]
+Homepage = "https://github.com/yui9696/sqisign-verify-trace"
+Repository = "https://github.com/yui9696/sqisign-verify-trace"
+
+[project.scripts]
+sqisign-verify-trace = "sqvtrace.cli:main"
+
+[tool.setuptools]
+packages = ["sqvtrace"]
+
+[tool.setuptools.package-data]
+sqvtrace = []
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

@@ -1,0 +1,44 @@
+sqisign-verify-trace
+Copyright (c) 2026 Moe Tabei <tabei@ryun.jp>
+Licensed under the MIT License (see LICENSE).
+
+================================================================================
+Relationship to the SQIsign reference implementation
+================================================================================
+
+This project instruments and derives data from the SQIsign reference
+implementation ("the-sqisign"):
+
+    https://github.com/SQISign/the-sqisign
+    commit dd133d7aca576c361a270c8e6434832535b42ecc
+    License: Apache-2.0, (c) the SQIsign team.
+
+The reference source code, its build artifacts, and the NIST Known-Answer-Test
+(.rsp / .req) files are NOT redistributed in this repository.
+
+What IS redistributed here, all original work under the MIT License:
+
+  * harness/verify_trace.patch — a unified diff that APPLIES TO the reference
+    file src/verification/ref/lvlx/verify.c (Apache-2.0). The diff is our work;
+    the file it patches is not included. Applying the patch to your own checkout
+    of the reference at the pinned commit reproduces the instrumented verifier.
+  * harness/trace_main.c — a standalone driver, our work.
+  * harness/build.sh — a build script, our work.
+  * vectors/goldens-lvl{1,3,5}.json — intermediate j-invariants OBSERVED by
+    running the instrumented reference over the NIST KAT inputs. These are facts
+    about the reference's deterministic verification pipeline at the pinned
+    commit; the KAT files themselves are not included.
+
+If you redistribute the instrumented verifier that results from applying the
+patch, that combined work is subject to the Apache-2.0 terms of the reference.
+
+================================================================================
+SHA-256 of the shipped harness + vectors (this release)
+================================================================================
+
+bd53ce9becc4cd6ea31c473b35196e6a816d42f7c97579b605b3960708adcfc8  harness/verify_trace.patch
+2d7cc7a18414b54243106ccb0d598e9d00b6441e7049008560b5954c148aa3b6  harness/trace_main.c
+4af224b3bbab5a1c08c7d39cf8015e199cff182dd8abf927aff815bcd17fe37d  harness/build.sh
+200431973d3db51c842bde372670949c794a2581de365592e2fc1d51752ee454  vectors/goldens-lvl1.json
+1cb9ad1889f7ece86130add64a97078f9c7dbfc23d3caea4fc8fdb1902f709ff  vectors/goldens-lvl3.json
+500c39147db5d2898a096a7b2a57a0cad9e613284e9684f77256f83996e88540  vectors/goldens-lvl5.json

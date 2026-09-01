@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.venv/
+venv/
+
+# Reference implementation and its artifacts — NEVER commit these
+harness/the-sqisign/
+harness/work/
+harness/trace_lvl1
+harness/trace_lvl3
+harness/trace_lvl5
+harness/*.o
+harness/verify_trace.c
+
+# NIST KAT files — not redistributed
+*.rsp
+*.req
+
+# OS
+.DS_Store
