@@ -1,0 +1,73 @@
+--- the-sqisign/src/verification/ref/lvlx/verify.c	2026-08-31 18:41:29
++++ trace/verify_trace.c	2026-09-01 18:40:42
+@@ -238,9 +238,29 @@
+     return codomain_splits;
+ }
+ 
+-// SQIsign verification
++
++// ---- instrumentation added for the trace tool (Moe Tabei) ----
++#include <stdio.h>
++extern void SQISIGN_NAMESPACE(ec_j_inv)(fp2_t *j, const ec_curve_t *E);
++extern void SQISIGN_NAMESPACE_GENERIC(fp2_encode)(void *dst, const fp2_t *a);
++static void trace_dump_curve(const char *tag, const ec_curve_t *E) {
++    fp2_t j; ec_j_inv(&j, E);
++    unsigned char buf[FP2_ENCODED_BYTES];
++    fp2_encode(buf, &j);
++    printf("TRACE %s ", tag);
++    for (size_t i=0;i<FP2_ENCODED_BYTES;i++) printf("%02x", buf[i]);
++    printf("\n");
++}
++static void trace_dump_scalar(const char *tag, const digit_t *s, int nw) {
++    printf("TRACE %s ", tag);
++    unsigned char *p=(unsigned char*)s;
++    for (int i=0;i<nw*(int)sizeof(digit_t);i++) printf("%02x", p[i]);
++    printf("\n");
++}
++
++// SQIsign verification (instrumented)
+ int
+-protocols_verify(signature_t *sig, const public_key_t *pk, const unsigned char *m, size_t l)
++protocols_verify_trace(signature_t *sig, const public_key_t *pk, const unsigned char *m, size_t l)
+ {
+     int verify;
+ 
+@@ -272,9 +292,11 @@
+ 
+     // computation of the challenge
+     ec_curve_t E_chall;
++    trace_dump_curve("E_aux", &E_aux);
+     if (!compute_challenge_verify(&E_chall, sig, &pk->curve, pk->hint_pk)) {
+         return 0;
+     }
++    trace_dump_curve("E_chall", &E_chall);
+ 
+     // Computation of the canonical bases for the challenge and aux curve
+     ec_basis_t B_chall_can, B_aux_can;
+@@ -288,6 +310,7 @@
+         if (!two_response_isogeny_verify(&E_chall, &B_chall_can, sig, pow_dim2_deg_resp)) {
+             return 0;
+         }
++        trace_dump_curve("E_chall_after_2resp", &E_chall);
+     }
+ 
+     // We can recover the commitment curve with a 2D isogeny
+@@ -296,6 +319,7 @@
+     ec_curve_t E_com;
+     if (!compute_commitment_curve_verify(&E_com, &B_chall_can, &B_aux_can, &E_chall, &E_aux, pow_dim2_deg_resp))
+         return 0;
++    trace_dump_curve("E_com", &E_com);
+ 
+     scalar_t chk_chall;
+ 
+@@ -303,7 +327,9 @@
+     hash_to_challenge(&chk_chall, pk, &E_com, m, l);
+ 
+     // performing the final check
++    trace_dump_scalar("chk_chall", chk_chall, NWORDS_ORDER);
++    trace_dump_scalar("sig_chall", sig->chall_coeff, NWORDS_ORDER);
+     verify = mp_compare(sig->chall_coeff, chk_chall, NWORDS_ORDER) == 0;
+-
++    printf("TRACE verdict %d\n", verify);
+     return verify;
+ }
