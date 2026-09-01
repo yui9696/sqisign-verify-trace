@@ -62,6 +62,15 @@ and `E_com`, need the isogeny and 2D-theta machinery to recompute and are not
 cross-checked here; they remain reference-observed.) Each vector now also carries
 its input `E_aux_A` so the cross-check runs from the committed data alone.
 
+Going one stage deeper: the **challenge isogeny** (`E_chall`) has also been
+reproduced in pure Python — its kernel, the `2^(f−backtracking)`-isogeny, and the
+codomain j-invariant match the reference for all 100 level-1 vectors. It is not
+yet shipped as a deterministic cross-check because one convention (the sign of
+the difference point in the reference's projective `difference_point`) is tied to
+the reference's low-level projective arithmetic; the full recipe and the precise
+obstacle are written up in
+[`docs/challenge-isogeny.md`](docs/challenge-isogeny.md).
+
 ## What the vectors are
 
 Five stages of `protocols_verify`, captured per KAT vector:
