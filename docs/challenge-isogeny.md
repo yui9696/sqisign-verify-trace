@@ -180,6 +180,31 @@ pushed basis land byte-for-byte on the reference's points. Verified against the
 affine x) and, across vectors, by tying the pushed curve's j-invariant to the
 golden `E_chall_after_2resp`.
 
-The theta `(2,2)`-isogeny chain (gluing → strategy of `(2,2)`-steps → splitting)
-that consumes these bases is not implemented yet, so `E_com` itself remains
-reference-observed. The gluing step is the next milestone.
+## `E_com`, milestone 2: the gluing `(2,2)`-isogeny
+
+The theta chain's first step is the *gluing*: it turns the product
+`E_chall × E_aux` into a level-2 theta structure on the abelian surface.
+[`sqvtrace/theta.py`](../sqvtrace/theta.py) reproduces the gluing codomain's
+theta-null point in pure Python, following the reference `gluing_compute`:
+
+- double the milestone-1 kernel bases down to the 8-torsion couple points
+  `K1_8`, `K2_8` (and their 4- and 2-torsion multiples);
+- from the 4-torsion, form the four `action-by-translation` `2×2` matrices and
+  assemble the `4×4` base-change matrix `M` (`gluing_change_of_basis`, ported
+  verbatim);
+- send each kernel point to its product theta point, apply `M`, and take
+  `to_squared_theta` (pointwise square then Hadamard); the codomain theta-null
+  point is a product of those, Hadamard-transformed.
+
+The whole computation is projective, and the action matrices are ratio-based
+(hence representation-independent), so affine `x`-only representatives `(x : 1)`
+suffice. Two checks confirm it: the reference's own **isotropy condition** — the
+fourth coordinate of each kernel image vanishes after `to_squared_theta` — holds
+for real KAT vectors at all three levels (a no-reference-data check), and the
+codomain theta-null point matches an instrumented reference dump **up to the
+projective scalar it is only defined up to**, on both a `two_resp = 0` and a
+`two_resp = 1` vector.
+
+The remaining `(2,2)`-steps (the strategy of theta isogenies) and the final
+splitting back to an elliptic product — from which `E_com` is read off — are the
+next milestones, so `E_com` itself is still reference-observed.
