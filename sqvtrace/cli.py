@@ -107,6 +107,39 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0 if rep.ok else 2
 
 
+def cmd_crosscheck(args: argparse.Namespace) -> int:
+    from collections import defaultdict
+
+    from .crosscheck import crosscheck_e_aux
+
+    paths = args.goldens or goldens.default_vector_files()
+    if not paths:
+        print("no golden files given and none found in vectors/", file=sys.stderr)
+        return 1
+    vectors = goldens.load_many(paths)
+    by_level: dict = defaultdict(list)
+    for v in vectors:
+        lvl = v.get("level")
+        if lvl in (1, 3, 5):
+            by_level[lvl].append(v)
+
+    all_ok = True
+    grand_total = grand_matched = 0
+    print("independent pure-Python cross-check of the E_aux stage")
+    print("  (recompute j(A) from E_aux_A; compare to the reference's E_aux)")
+    for lvl in sorted(by_level):
+        r = crosscheck_e_aux(by_level[lvl], lvl)
+        grand_total += r.total
+        grand_matched += r.matched
+        all_ok = all_ok and r.ok
+        status = "ok" if r.ok else f"FAIL ({len(r.mismatches)} mismatch)"
+        print(f"  level {lvl}: {r.matched}/{r.total} match  {status}")
+        for idx, exp, got in r.mismatches[:3]:
+            print(f"    vec {idx}: expected {exp[:16]}... got {got[:16]}...")
+    print(f"  total: {grand_matched}/{grand_total} independently reproduced")
+    return 0 if all_ok and grand_total > 0 else 2
+
+
 def cmd_diff(args: argparse.Namespace) -> int:
     a = _load_side(args.a)
     b = _load_side(args.b)
@@ -162,6 +195,13 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--out", help="output JSON (default: stdout)")
     g.add_argument("--limit", type=int, help="only first N records")
     g.set_defaults(func=cmd_generate)
+
+    x = sub.add_parser(
+        "crosscheck",
+        help="independently recompute the E_aux stage in pure Python and compare",
+    )
+    x.add_argument("--goldens", nargs="*", help="golden JSON files (default: vectors/)")
+    x.set_defaults(func=cmd_crosscheck)
 
     c = sub.add_parser("check", help="self-consistency check of a golden set")
     c.add_argument("--goldens", nargs="*", help="golden JSON file(s); default: vectors/")

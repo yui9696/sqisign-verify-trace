@@ -38,6 +38,30 @@ That is what makes these usable as interop golden vectors: they are
 implementation-independent *exactly where the KAT signatures are not*. See
 [`docs/why-verification-is-deterministic.md`](docs/why-verification-is-deterministic.md).
 
+### This is not just an argument — one stage is independently reproduced
+
+The `E_aux` stage is checkable with a few lines of field arithmetic and no
+isogeny machinery: `E_aux` is the j-invariant of the Montgomery curve whose
+A-coefficient (`E_aux_A`) is decoded straight from the signature, so
+`j(A) = 256·(A²−3)³ / (A²−4)` in `F_{p²}`. `sqvtrace/crosscheck.py` recomputes it
+in **pure Python** (Python integers only, using the SQIsign primes
+`5·2²⁴⁸−1`, `65·2³⁷⁶−1`, `27·2⁵⁰⁰−1`) and compares to the committed values:
+
+```
+$ sqisign-verify-trace crosscheck
+  level 1: 100/100 match  ok
+  level 3: 100/100 match  ok
+  level 5: 100/100 match  ok
+  total: 300/300 independently reproduced
+```
+
+A completely separate implementation lands on the reference's bytes exactly, for
+all 300 vectors — so for this stage the implementation-independence is a
+**measured fact**, not only a mathematical claim. (The deeper stages, `E_chall`
+and `E_com`, need the isogeny and 2D-theta machinery to recompute and are not
+cross-checked here; they remain reference-observed.) Each vector now also carries
+its input `E_aux_A` so the cross-check runs from the committed data alone.
+
 ## What the vectors are
 
 Five stages of `protocols_verify`, captured per KAT vector:
@@ -134,8 +158,11 @@ suite on Python 3.11/3.12/3.13 and never builds the C reference.
 
 ## Honest limitations
 
-- These are **reference-observed** values at commit `dd133d7`. The SQIsign
-  reference implementation is explicitly **not production-ready**.
+- These are **reference-observed** values at commit `dd133d7` (the SQIsign
+  reference implementation is explicitly **not production-ready**) — with the
+  exception of the `E_aux` stage, which is independently recomputed in pure
+  Python and confirmed to match all 300 vectors (`crosscheck`). The deeper
+  stages remain reference-observed.
 - They are mathematically implementation-independent for a **correct** verifier,
   but pinned to **one encoding convention** — the spec's canonical `fp2`
   encoding as realized by the reference's `fp2_encode`. A verifier using a
