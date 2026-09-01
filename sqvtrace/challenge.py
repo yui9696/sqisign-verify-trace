@@ -33,6 +33,12 @@ PARAMS = {
     5: (27 * 2**500 - 1, 64, 500, 27, 5, 292, 32, 32),
 }
 
+# SQIsign_response_length per level (reference encoded_sizes.h). This is *not*
+# TORSION_EVEN_POWER - 2; it is the isogeny-response length used to size the
+# dimension-2 response degree pow_dim2 = response_length - two_resp - backtracking
+# (verify.c: pow_dim2_deg_resp).
+RESP_LEN = {1: 126, 3: 192, 5: 253}
+
 
 # --------------------------------------------------------------------------
 # F_{p^2} = F_p[i]/(i^2 + 1), element (a, b) = a + b*i, over Python ints.
@@ -563,7 +569,7 @@ def recompute_e_chall_after_2resp(inp: Inputs) -> str:
     two_resp_length > 0). Uses the exact E_chall curve, rebuilds the challenge
     basis, applies the change-of-basis matrix, and takes the small isogeny."""
     p, fp_bytes, f, cof, cofbits, sig_bytes, nb, sec = PARAMS[inp.level]
-    resp_len = f - 2  # SQIsign_response_length = TORSION_EVEN_POWER - 2
+    resp_len = RESP_LEN[inp.level]  # SQIsign_response_length (verify.c)
     two_resp = inp.two_resp_length
     if two_resp == 0:
         raise ValueError("no 2-response isogeny for two_resp_length == 0")
