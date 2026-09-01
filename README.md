@@ -106,8 +106,16 @@ So **all four** verification curve stages (`E_aux`, `E_chall`,
 self-contained, pure-Python implementation from the committed inputs — the
 readable, executable reference the community keeps asking for, end to end. The
 recipes are in [`docs/challenge-isogeny.md`](docs/challenge-isogeny.md) (the
-challenge isogeny and the `E_com` theta chain). The pure-Python chain is `O(n²)`
-and heavy, so the CLI takes a `--limit`; every vector checked matches.
+challenge isogeny and the `E_com` theta chain).
+
+And it is run over the **whole committed set, not a subset**: every one of the
+300 vectors is reproduced byte-for-byte at every stage —
+**`E_com` 300/300**, `E_chall` 300/300, `E_aux` 300/300, and
+`E_chall_after_2resp` 166/166 (the vectors that have that stage), with zero
+mismatches. The measured results are in
+[`docs/reproduction.md`](docs/reproduction.md). The pure-Python chain is `O(n²)`
+and heavy (~21 min for the full sweep), so the CLI takes a `--limit` for quick
+checks.
 
 ## What the vectors are
 
@@ -207,13 +215,13 @@ suite on Python 3.11/3.12/3.13 and never builds the C reference.
 
 - The committed vectors are **reference-observed** values at commit `dd133d7`
   (the SQIsign reference implementation is explicitly **not production-ready**).
-  Independently, **all four curve stages are also recomputed in pure Python** and
-  confirmed to match — `E_aux` for all 300 vectors, and `E_chall`,
-  `E_chall_after_2resp` and `E_com` for the subsets the (slow, exact) pure-Python
-  recomputation is run on (every vector checked matches, at all three levels).
-  The pure-Python side is an *independent* reimplementation, so a match is
-  evidence for both the vector and the reproduction; it is still checked against
-  the same reference's encoding convention (below).
+  Independently, **all four curve stages are also recomputed in pure Python and
+  confirmed to match for all 300 vectors** — `E_aux`, `E_chall` and `E_com`
+  300/300, `E_chall_after_2resp` 166/166 (the vectors that have it), zero
+  mismatches ([`docs/reproduction.md`](docs/reproduction.md)). The pure-Python
+  side is an *independent* reimplementation, so a match is evidence for both the
+  vector and the reproduction; it is still checked against the same reference's
+  encoding convention (below).
 - They are mathematically implementation-independent for a **correct** verifier,
   but pinned to **one encoding convention** — the spec's canonical `fp2`
   encoding as realized by the reference's `fp2_encode`. A verifier using a

@@ -129,15 +129,14 @@ With the exact `E_chall` model in hand, the next stage follows:
 - `E_chall_after_2resp`: independent, deterministic — all three levels, for every
   vector that has this stage.
 - `E_com`: the recovered commitment curve is the codomain of the theta
-  `(2ⁿ,2ⁿ)`-isogeny (spec §8.5) — a different and heavier machine. The curve
-  itself is **still reference-observed**, but its first stage is now reproduced:
-  see below.
+  `(2ⁿ,2ⁿ)`-isogeny (spec §8.5) — a different and heavier machine, now reproduced
+  in full (`crosscheck --ecom`); see the milestones below.
 
-**Three of the four curve stages of SQIsign verification are now reproduced by an
-independent, self-contained pure-Python implementation** — the readable, correct,
-executable reference the community keeps asking for, stage by stage. The
-dimension-2 theta isogeny (`E_com`) is the remaining stage, and it is being built
-milestone by milestone.
+**All four curve stages of SQIsign verification are now reproduced by an
+independent, self-contained pure-Python implementation**, and confirmed against
+every one of the 300 committed vectors ([`reproduction.md`](reproduction.md)) —
+the readable, executable reference the community keeps asking for, end to end.
+The `E_com` theta chain was built in three milestones, described next.
 
 ## `E_com`, milestone 1: the theta-isogeny kernel bases
 
