@@ -1,13 +1,16 @@
 # sqisign-verify-trace
 
-**Golden intermediate-value vectors for SQIsign verification** — and a small tool
-to produce and cross-check them.
+**Golden intermediate-value vectors for SQIsign verification — and a complete,
+independent, pure-Python verifier that reproduces every one of them.**
 
 The NIST Known-Answer-Test (KAT) files pin only *input → verdict*. They say
 nothing about the curves the verifier computes on the way. This project fills
 that gap: it publishes the **intermediate j-invariants** of the Deuring
 verification pipeline for 300 real KAT vectors (100 per security level), plus
-the instrumentation to regenerate and diff them against any other verifier.
+the instrumentation to regenerate and diff them against any other verifier — and
+a from-scratch pure-Python implementation that recomputes **all four curve
+stages** and the final Fiat-Shamir check, i.e. an actual accept/reject
+[verifier](sqvtrace/verify.py), stdlib only.
 
 It is the white-box sibling of
 [`sqisign-conformance`](https://github.com/yui9696/sqisign-conformance)
@@ -116,6 +119,28 @@ mismatches. The measured results are in
 [`docs/reproduction.md`](docs/reproduction.md). The pure-Python chain is `O(n²)`
 and heavy (~21 min for the full sweep), so the CLI takes a `--limit` for quick
 checks.
+
+## A complete pure-Python verifier
+
+With all four curve stages in hand, one small step remains to a real verifier:
+the Fiat-Shamir check. [`sqvtrace/verify.py`](sqvtrace/verify.py) adds
+`hash_to_challenge` (SHAKE256 over the encoded `j(pk)` and `j(E_com)` plus the
+message, via `hashlib`) and ties the pipeline together into an actual accept /
+reject decision — the same one the reference `protocols_verify` makes:
+
+```console
+$ sqisign-verify-trace verify --level 1 --kat PQCsignKAT_353_SQIsign_lvl1.rsp --limit 5
+pure-Python verify: 5/5 accepted (level 1); all valid KAT signatures should accept
+```
+
+It accepts every valid KAT signature and rejects any tampered one — a flipped
+byte anywhere in the signature (the challenge coefficient, the change-of-basis
+matrix, `E_aux_A`, the hints), a flipped message byte, or the wrong public key
+all make it return `REJECT` (`tests/test_verify.py`). So this repository is not
+only a set of golden vectors; it is a **self-contained, readable, executable
+SQIsign verifier in pure Python** — stdlib only, no C, no dependencies. Like the
+reference it mirrors, it is a reference for reading and interop, **not** a
+hardened or constant-time implementation.
 
 ## What the vectors are
 

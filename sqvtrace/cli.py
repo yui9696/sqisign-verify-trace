@@ -196,6 +196,33 @@ def cmd_diff(args: argparse.Namespace) -> int:
     return 0 if rep.clean else 3
 
 
+def cmd_verify(args: argparse.Namespace) -> int:
+    from .verify import verify_signature
+
+    if args.kat:
+        records = parse_kat(args.kat)
+        if args.limit:
+            records = records[: args.limit]
+        accepted = 0
+        for i, rec in enumerate(records):
+            pk, msg, sig = kat_signature(rec)
+            ok = verify_signature(pk, sig, bytes.fromhex(msg) if msg else b"", args.level)
+            accepted += ok
+            if not ok:
+                print(f"  vec {i}: REJECT (expected accept for a valid KAT signature)")
+        print(f"pure-Python verify: {accepted}/{len(records)} accepted "
+              f"(level {args.level}); all valid KAT signatures should accept")
+        return 0 if accepted == len(records) else 2
+
+    if not (args.pk and args.sig):
+        print("give --kat FILE, or --pk and --sig (and --msg)", file=sys.stderr)
+        return 1
+    msg = bytes.fromhex(args.msg) if args.msg else b""
+    ok = verify_signature(args.pk, args.sig, msg, args.level)
+    print("ACCEPT" if ok else "REJECT")
+    return 0 if ok else 1
+
+
 def cmd_walkthrough(args: argparse.Namespace) -> int:
     from . import walkthrough
 
@@ -265,6 +292,18 @@ def build_parser() -> argparse.ArgumentParser:
     d.add_argument("--a", required=True, help="golden JSON or tracer output")
     d.add_argument("--b", required=True, help="golden JSON or tracer output")
     d.set_defaults(func=cmd_diff)
+
+    ver = sub.add_parser(
+        "verify",
+        help="verify a signature end-to-end in pure Python (accept/reject)",
+    )
+    ver.add_argument("--level", type=int, default=1, choices=(1, 3, 5))
+    ver.add_argument("--kat", help="verify every signature in a PQCsignKAT .rsp file")
+    ver.add_argument("--limit", type=int, help="only the first N KAT records")
+    ver.add_argument("--pk", help="public key (hex) for a single verification")
+    ver.add_argument("--sig", help="signature (hex) for a single verification")
+    ver.add_argument("--msg", help="message (hex) for a single verification", default="")
+    ver.set_defaults(func=cmd_verify)
 
     w = sub.add_parser("walkthrough", help="print the level-1 vector-0 worked example")
     w.add_argument("--out", help="write markdown to a file instead of stdout")
