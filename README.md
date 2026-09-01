@@ -57,10 +57,11 @@ $ sqisign-verify-trace crosscheck
 
 A completely separate implementation lands on the reference's bytes exactly, for
 all 300 vectors — so for this stage the implementation-independence is a
-**measured fact**, not only a mathematical claim. (The deeper stages, `E_chall`
-and `E_com`, need the isogeny and 2D-theta machinery to recompute and are not
-cross-checked here; they remain reference-observed.) Each vector now also carries
-its input `E_aux_A` so the cross-check runs from the committed data alone.
+**measured fact**, not only a mathematical claim. Each vector now also carries
+its input `E_aux_A` so the cross-check runs from the committed data alone. And it
+no longer stops at `E_aux`: every one of the four curve stages, up to and
+including the dimension-2 theta isogeny `E_com`, is now recomputed in pure
+Python — see below.
 
 Going deeper, the **challenge isogeny** (`E_chall`) and the **2-response
 isogeny** (`E_chall_after_2resp`) are reproduced in pure Python too —
@@ -83,14 +84,30 @@ independent pure-Python cross-check of the E_chall_after_2resp stage
   ...
 ```
 
-So **three** of the four verification curve stages (`E_aux`, `E_chall`,
-`E_chall_after_2resp`) are now reproduced by an independent, self-contained,
-pure-Python implementation from the committed inputs — a step-by-step start on
-the readable executable reference the community keeps asking for. The full recipe
-is in [`docs/challenge-isogeny.md`](docs/challenge-isogeny.md). (The `O(n log n)`
-strategy keeps it fast; the CLI still takes a `--limit`. Only `E_com`, the
-theta-`(2ⁿ,2ⁿ)`-isogeny stage, is left — it is not attempted and remains
-reference-observed.)
+And the last stage is reproduced too. `E_com` is the codomain of a **dimension-2
+theta `(2ⁿ,2ⁿ)`-isogeny** from `E_chall × E_aux` — the "long pole" of
+verification — recovered by gluing the two curves into a level-2 theta structure,
+running the chain of `(2,2)`-steps, and splitting back to an elliptic product.
+[`sqvtrace/theta.py`](sqvtrace/theta.py) reproduces that whole machine in pure
+Python, and its recomputed `E_com` **j-invariant matches the reference golden at
+all three security levels**:
+
+```
+$ sqisign-verify-trace crosscheck --ecom --limit 3
+independent pure-Python cross-check of the E_com stage
+  (the dimension-2 theta (2^n,2^n)-isogeny: gluing -> chain -> splitting)
+  level 1: 3/3 match  ok
+  level 3: 3/3 match  ok
+  level 5: 3/3 match  ok
+```
+
+So **all four** verification curve stages (`E_aux`, `E_chall`,
+`E_chall_after_2resp`, `E_com`) are now reproduced by an independent,
+self-contained, pure-Python implementation from the committed inputs — the
+readable, executable reference the community keeps asking for, end to end. The
+recipes are in [`docs/challenge-isogeny.md`](docs/challenge-isogeny.md) (the
+challenge isogeny and the `E_com` theta chain). The pure-Python chain is `O(n²)`
+and heavy, so the CLI takes a `--limit`; every vector checked matches.
 
 ## What the vectors are
 
@@ -188,11 +205,15 @@ suite on Python 3.11/3.12/3.13 and never builds the C reference.
 
 ## Honest limitations
 
-- These are **reference-observed** values at commit `dd133d7` (the SQIsign
-  reference implementation is explicitly **not production-ready**) — with the
-  exception of the `E_aux` stage, which is independently recomputed in pure
-  Python and confirmed to match all 300 vectors (`crosscheck`). The deeper
-  stages remain reference-observed.
+- The committed vectors are **reference-observed** values at commit `dd133d7`
+  (the SQIsign reference implementation is explicitly **not production-ready**).
+  Independently, **all four curve stages are also recomputed in pure Python** and
+  confirmed to match — `E_aux` for all 300 vectors, and `E_chall`,
+  `E_chall_after_2resp` and `E_com` for the subsets the (slow, exact) pure-Python
+  recomputation is run on (every vector checked matches, at all three levels).
+  The pure-Python side is an *independent* reimplementation, so a match is
+  evidence for both the vector and the reproduction; it is still checked against
+  the same reference's encoding convention (below).
 - They are mathematically implementation-independent for a **correct** verifier,
   but pinned to **one encoding convention** — the spec's canonical `fp2`
   encoding as realized by the reference's `fp2_encode`. A verifier using a

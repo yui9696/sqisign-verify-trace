@@ -205,6 +205,30 @@ codomain theta-null point matches an instrumented reference dump **up to the
 projective scalar it is only defined up to**, on both a `two_resp = 0` and a
 `two_resp = 1` vector.
 
-The remaining `(2,2)`-steps (the strategy of theta isogenies) and the final
-splitting back to an elliptic product — from which `E_com` is read off — are the
-next milestones, so `E_com` itself is still reference-observed.
+## `E_com`, milestone 3: the full chain and splitting
+
+With the gluing in hand, the rest of the dimension-2 theta `(2ⁿ,2ⁿ)`-isogeny is
+reproduced in [`sqvtrace/theta.py`](../sqvtrace/theta.py) and `E_com` comes out:
+
+- **The chain.** After the gluing, the two kernel generators are pushed into
+  theta coordinates (`gluing_eval_point`, via the reference's cross-addition
+  components). Then `n-1` further `(2,2)`-steps run: each step is defined by the
+  8-torsion of the current generators (obtained by theta doubling,
+  `double_point`), computes the codomain theta-null point
+  (`theta_isogeny_compute`), and pushes the generators forward (`theta_eval`).
+  The reference's standard/dual-coordinate flags for the last two steps are
+  followed. This is `O(n²)` rather than the reference's `O(n log n)` strategy —
+  simpler, and the codomain is identical.
+- **Splitting.** The final theta-null point is normalised to a product theta
+  point by the reference's `splitting_compute` (the `EVEN_INDEX` / `CHI_EVAL` /
+  `SPLITTING_TRANSFORMS` tables, verification path, no randomisation), and read
+  off as two Montgomery curves (`elliptic_from_split`, the
+  `A = -2(x⁴+z⁴)/(x⁴-z⁴)` formula). `E_com` is the first factor.
+
+Everything is projective and internally consistent, so the intermediate theta
+points need not match the reference byte-for-byte (they differ by an overall
+scalar); the **j-invariant of `E_com` is scale-independent and matches the
+reference golden at all three levels** (`crosscheck --ecom`,
+`recompute_e_com`). With this, all four curve stages of SQIsign verification —
+`E_aux`, `E_chall`, `E_chall_after_2resp`, `E_com` — are reproduced by an
+independent, self-contained pure-Python implementation.

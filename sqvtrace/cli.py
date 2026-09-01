@@ -169,6 +169,22 @@ def cmd_crosscheck(args: argparse.Namespace) -> int:
             for idx, exp, got in r.mismatches[:3]:
                 print(f"    vec {idx}: expected {exp[:16]}... got {got[:16]}...")
 
+    if args.ecom:
+        from .theta import crosscheck_e_com
+
+        print()
+        print("independent pure-Python cross-check of the E_com stage")
+        print("  (the dimension-2 theta (2^n,2^n)-isogeny: gluing -> chain -> splitting)")
+        for lvl in sorted(by_level):
+            r = crosscheck_e_com(by_level[lvl], lvl)
+            grand_total += r.total
+            grand_matched += r.matched
+            all_ok = all_ok and r.ok
+            status = "ok" if r.ok else f"FAIL ({len(r.mismatches)} mismatch)"
+            print(f"  level {lvl}: {r.matched}/{r.total} match  {status}")
+            for idx, exp, got in r.mismatches[:3]:
+                print(f"    vec {idx}: expected {exp[:16]}... got {got[:16]}...")
+
     return 0 if all_ok and grand_total > 0 else 2
 
 
@@ -235,6 +251,8 @@ def build_parser() -> argparse.ArgumentParser:
     x.add_argument("--goldens", nargs="*", help="golden JSON files (default: vectors/)")
     x.add_argument("--echall", action="store_true",
                    help="also cross-check the E_chall stage (the challenge isogeny; slower)")
+    x.add_argument("--ecom", action="store_true",
+                   help="also cross-check the E_com stage (the dimension-2 theta isogeny; slowest)")
     x.add_argument("--limit", type=int, default=None,
                    help="check at most N vectors per level (E_chall in pure Python is slow)")
     x.set_defaults(func=cmd_crosscheck)

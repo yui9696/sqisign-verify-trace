@@ -1,28 +1,43 @@
-"""E_com, milestone 2: the gluing (2,2)-isogeny (E1 x E2 -> theta structure).
+"""E_com: the dimension-2 theta ``(2^n, 2^n)``-isogeny (spec section 8.5).
 
-The commitment curve ``E_com`` is recovered as (a factor of) the codomain of a
-dimension-2 theta ``(2^n, 2^n)``-isogeny from the elliptic product
-``E_chall x E_aux``. The first step of that isogeny is the *gluing*: it turns the
-product of two elliptic curves into a level-2 theta structure on the abelian
-surface. This module reproduces the gluing codomain's theta-null point in pure
-Python, following the reference ``gluing_compute`` (``theta_isogenies.c``).
+The commitment curve ``E_com`` is recovered as the first factor of the codomain
+of a dimension-2 theta ``(2^n, 2^n)``-isogeny from the elliptic product
+``E_chall x E_aux`` (verify.c ``compute_commitment_curve_verify``). This module
+reproduces that whole isogeny -- and hence ``E_com`` -- in pure Python, following
+the reference ``theta_isogenies.c`` / ``theta_structure.c``:
 
-The kernel bases (the ``lift_basis`` inputs) come from
-:func:`sqvtrace.challenge.commitment_kernel_bases` (milestone 1). Here we only
-need the 8-torsion couple points ``K1_8`` / ``K2_8`` obtained by doubling those
-bases down to order 8.
+1. **Gluing.** The first ``(2,2)``-step turns the product ``E_chall x E_aux``
+   into a level-2 theta structure on the abelian surface
+   (:func:`_gluing`, :func:`gluing_codomain`).
+2. **The chain.** ``n-1`` further ``(2,2)``-steps in theta coordinates, each
+   defined by the 8-torsion image of the kernel generators, which are pushed
+   forward step by step (:func:`theta_isogeny_compute`, :func:`theta_eval`,
+   :func:`double_point`).
+3. **Splitting.** The final theta-null point is normalised to a product theta
+   point (:func:`splitting_matrix`) and read off as two Montgomery curves
+   (:func:`elliptic_from_split`); ``E_com`` is the first.
 
-Everything is projective: the reference's theta-null point is defined only up to
-a scalar, and the action-by-translation matrices are ratio-based (hence
-representation-independent), so affine ``x``-only representatives ``(x : 1)``
-suffice. The strong internal check that the gluing is correct is that, after the
-``to_squared_theta`` transform, the fourth coordinate of each kernel image
-vanishes -- the isotropy condition the reference also tests.
+The kernel bases come from :func:`sqvtrace.challenge.commitment_kernel_bases`.
+Everything is projective; the theta-null point is defined only up to a scalar and
+the action matrices are ratio-based, so affine ``x``-only representatives suffice
+and no Jacobian byte-exactness is needed. The pipeline is validated end-to-end:
+the recomputed ``E_com`` j-invariant matches the reference golden at all three
+security levels (:func:`recompute_e_com`, ``crosscheck_e_com``).
 """
 
 from __future__ import annotations
 
-from .challenge import Fp2, FullCurve, PARAMS, commitment_kernel_bases
+from dataclasses import dataclass
+
+from .challenge import (
+    CrossCheckResult,
+    Curve,
+    Fp2,
+    FullCurve,
+    PARAMS,
+    commitment_kernel_bases,
+    inputs_from_hex,
+)
 
 
 # --------------------------------------------------------------------------
@@ -42,15 +57,11 @@ def to_squared_theta(P):
 def apply_matrix(M, P):
     """Apply a 4x4 matrix (list of 4 rows of 4 Fp2) to a theta point."""
     x, y, z, t = P
-    out = []
-    for r in range(4):
-        m = M[r]
-        out.append(m[0] * x + m[1] * y + m[2] * z + m[3] * t)
-    return tuple(out)
+    return tuple(M[r][0] * x + M[r][1] * y + M[r][2] * z + M[r][3] * t for r in range(4))
 
 
 # --------------------------------------------------------------------------
-# action by translation (reference action_by_translation_compute_matrix)
+# gluing: E_chall x E_aux -> level-2 theta structure
 # --------------------------------------------------------------------------
 def _action_matrix(P4, P2, one):
     """The 2x2 translation matrix (g00, g01, g10, g11) from an x-only order-4
@@ -109,25 +120,23 @@ def _product_theta(P1_xz, P2_xz):
     return (x1 * x2, x1 * z2, x2 * z1, z1 * z2)
 
 
-# --------------------------------------------------------------------------
-# gluing codomain
-# --------------------------------------------------------------------------
-def gluing_codomain(inp, kb=None):
-    """Return the theta-null point (x, y, z, t) of the gluing codomain for the
-    given verification inputs, projective (defined up to a scalar).
+@dataclass
+class Gluing:
+    M: list          # 4x4 base-change matrix
+    precomp: tuple   # projective factors for point evaluation
+    imageK1_8: tuple # (x, y) of phi(K1_8)
+    null: tuple      # codomain theta-null point (projective)
+    K1_8: tuple      # the 8-torsion couple point used, as affine points
+    A1: Fp2          # E_chall A-coefficient
+    A2: Fp2          # E_aux A-coefficient
 
-    Raises ``ValueError`` if the isotropy condition fails (which would mean the
-    reproduced kernel is wrong, not that the signature is malformed -- these are
-    all valid KAT signatures).
-    """
-    p = PARAMS[inp.level][0]
+
+def _gluing(kb, p):
+    """Compute the gluing isogeny data from the milestone-1 kernel bases."""
     one = Fp2(1, 0, p)
-    if kb is None:
-        kb = commitment_kernel_bases(inp)
-    pd = kb["pow_dim2"]
-
     E1 = FullCurve(kb["chall"]["A"])
     E2 = FullCurve(kb["aux"]["A"])
+    pd = kb["pow_dim2"]
 
     def dbl(E, P, k):
         for _ in range(k):
@@ -138,29 +147,255 @@ def gluing_codomain(inp, kb=None):
     K1_8 = (dbl(E1, kb["chall"]["P"], pd - 1), dbl(E2, kb["aux"]["P"], pd - 1))
     K2_8 = (dbl(E1, kb["chall"]["Q"], pd - 1), dbl(E2, kb["aux"]["Q"], pd - 1))
 
-    def xz(P):  # affine (x, y) -> x-only (x : 1)
+    def xz(P):
         return (P[0], one)
 
-    # 4- and 2-torsion couple points (per curve).
     K1_4 = (E1.add(K1_8[0], K1_8[0]), E2.add(K1_8[1], K1_8[1]))
     K2_4 = (E1.add(K2_8[0], K2_8[0]), E2.add(K2_8[1], K2_8[1]))
     K1_2 = (E1.add(K1_4[0], K1_4[0]), E2.add(K1_4[1], K1_4[1]))
     K2_2 = (E1.add(K2_4[0], K2_4[0]), E2.add(K2_4[1], K2_4[1]))
 
     Gi = [
-        _action_matrix(xz(K1_4[0]), xz(K1_2[0]), one),  # K1_4.P1 on E1
-        _action_matrix(xz(K1_4[1]), xz(K1_2[1]), one),  # K1_4.P2 on E2
-        _action_matrix(xz(K2_4[0]), xz(K2_2[0]), one),  # K2_4.P1 on E1
-        _action_matrix(xz(K2_4[1]), xz(K2_2[1]), one),  # K2_4.P2 on E2
+        _action_matrix(xz(K1_4[0]), xz(K1_2[0]), one),
+        _action_matrix(xz(K1_4[1]), xz(K1_2[1]), one),
+        _action_matrix(xz(K2_4[0]), xz(K2_2[0]), one),
+        _action_matrix(xz(K2_4[1]), xz(K2_2[1]), one),
     ]
     M = gluing_change_of_basis(Gi, one)
 
     TT1 = to_squared_theta(apply_matrix(M, _product_theta(xz(K1_8[0]), xz(K1_8[1]))))
     TT2 = to_squared_theta(apply_matrix(M, _product_theta(xz(K2_8[0]), xz(K2_8[1]))))
-
     if not (TT1[3].is_zero() and TT2[3].is_zero()):
         raise ValueError("gluing isotropy condition failed (TT.t != 0)")
 
-    # codomain theta-null point (projective), then the final Hadamard.
-    codomain = (TT1[0] * TT2[0], TT1[1] * TT2[0], TT1[0] * TT2[2], Fp2(0, 0, p))
-    return hadamard(codomain)
+    zero = Fp2(0, 0, p)
+    codomain = (TT1[0] * TT2[0], TT1[1] * TT2[0], TT1[0] * TT2[2], zero)
+    precomp = (TT1[1] * TT2[2], codomain[2], codomain[1], zero)
+    imageK1_8 = (TT1[0] * precomp[0], TT1[2] * precomp[2])
+    return Gluing(M, precomp, imageK1_8, hadamard(codomain), K1_8, kb["chall"]["A"], kb["aux"]["A"])
+
+
+def gluing_codomain(inp, kb=None):
+    """The theta-null point of the gluing codomain, projective (up to a scalar).
+    Raises ``ValueError`` if the isotropy condition fails."""
+    p = PARAMS[inp.level][0]
+    if kb is None:
+        kb = commitment_kernel_bases(inp)
+    return _gluing(kb, p).null
+
+
+def _jac_add_components(P, Q, A):
+    """Reference jac_to_xz_add_components for affine points (z = 1): returns
+    (u, v, w) with x(P+Q) = (u-v : w) and x(P-Q) = (u+v : w)."""
+    x1, y1 = P
+    x2, y2 = Q
+    lam = x1 - x2
+    lam2 = lam * lam
+    gamma = x1 + x2 + A
+    u = y1 * y1 + y2 * y2 - gamma * lam2
+    v = y1 * y2 + y1 * y2
+    return u, v, lam2
+
+
+def gluing_eval_point(P_couple, g: Gluing, p):
+    """Push a couple point (affine on E1, affine on E2) through the gluing into
+    theta coordinates (reference gluing_eval_point)."""
+    zero = Fp2(0, 0, p)
+    u1, v1, w1 = _jac_add_components(P_couple[0], g.K1_8[0], g.A1)
+    u2, v2, w2 = _jac_add_components(P_couple[1], g.K1_8[1], g.A2)
+    T1 = (u1 * u2 + v1 * v2, u1 * w2, w1 * u2, w1 * w2)
+    T2x = (u1 + v1) * (u2 + v2) - T1[0]
+    T2 = (T2x, v1 * w2, w1 * v2, zero)
+    T1 = apply_matrix(g.M, T1)
+    T2 = apply_matrix(g.M, T2)
+    diff = tuple(T1[i] * T1[i] - T2[i] * T2[i] for i in range(4))
+    diff = hadamard(diff)
+    ikx, iky = g.imageK1_8
+    image = (diff[0] * iky, diff[1] * iky, diff[2] * ikx, diff[3] * ikx)
+    return hadamard(image)
+
+
+# --------------------------------------------------------------------------
+# theta structure doubling and generic (2,2)-steps
+# --------------------------------------------------------------------------
+def precompute(null):
+    """Reference theta_precomputation: the 8 constants used by doubling."""
+    Ad = to_squared_theta(null)
+    t1, t2 = Ad[0] * Ad[1], Ad[2] * Ad[3]
+    XYZ0, XYT0, YZT0, XZT0 = t1 * Ad[2], t1 * Ad[3], t2 * Ad[1], t2 * Ad[0]
+    s1, s2 = null[0] * null[1], null[2] * null[3]
+    xyz0, xyt0, yzt0, xzt0 = s1 * null[2], s1 * null[3], s2 * null[1], s2 * null[0]
+    return (XYZ0, XYT0, YZT0, XZT0, xyz0, xyt0, yzt0, xzt0)
+
+
+def double_point(P, pc):
+    """Reference double_point: one doubling in the theta structure with
+    precomputed constants ``pc``."""
+    XYZ0, XYT0, YZT0, XZT0, xyz0, xyt0, yzt0, xzt0 = pc
+    o = to_squared_theta(P)
+    o = (o[0] * o[0] * YZT0, o[1] * o[1] * XZT0, o[2] * o[2] * XYT0, o[3] * o[3] * XYZ0)
+    o = hadamard(o)
+    return (o[0] * yzt0, o[1] * xzt0, o[2] * xyt0, o[3] * xyz0)
+
+
+def double_iter(P, pc, e):
+    for _ in range(e):
+        P = double_point(P, pc)
+    return P
+
+
+def theta_isogeny_compute(T1_8, T2_8, hb1, hb2):
+    """Reference theta_isogeny_compute: a generic (2,2)-step from the 8-torsion
+    points ``T1_8``, ``T2_8``. Returns (codomain null point, eval precomputation,
+    hb1, hb2). ``hb1`` / ``hb2`` select standard vs dual coordinates in/out."""
+    if hb1:
+        TT1 = to_squared_theta(hadamard(T1_8))
+        TT2 = to_squared_theta(hadamard(T2_8))
+    else:
+        TT1 = to_squared_theta(T1_8)
+        TT2 = to_squared_theta(T2_8)
+    t1, t2 = TT1[0] * TT2[1], TT1[1] * TT2[0]
+    null = (TT2[0] * t1, TT2[1] * t2, TT2[2] * t1, TT2[3] * t2)
+    t3 = TT2[2] * TT2[3]
+    precomp = (t3 * TT1[1], t3 * TT1[0], null[3], null[2])
+    if hb2:
+        null = hadamard(null)
+    return null, precomp, hb1, hb2
+
+
+def theta_eval(P, precomp, hb1, hb2):
+    """Reference theta_isogeny_eval: push a theta point through the step."""
+    o = to_squared_theta(hadamard(P)) if hb1 else to_squared_theta(P)
+    o = (o[0] * precomp[0], o[1] * precomp[1], o[2] * precomp[2], o[3] * precomp[3])
+    return hadamard(o) if hb2 else o
+
+
+# --------------------------------------------------------------------------
+# splitting: theta structure -> product of two elliptic curves
+# --------------------------------------------------------------------------
+EVEN_INDEX = [(0, 0), (0, 1), (0, 2), (0, 3), (1, 0), (1, 2), (2, 0), (2, 1), (3, 0), (3, 3)]
+CHI_EVAL = [[1, 1, 1, 1], [1, -1, 1, -1], [1, 1, -1, -1], [1, -1, -1, 1]]
+# SPLITTING_TRANSFORMS as indices into (0, 1, i, -1, -i).
+_SPLIT_IDX = [
+    [[1, 2, 1, 2], [1, 4, 3, 2], [1, 2, 3, 4], [3, 2, 3, 2]],
+    [[1, 0, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0], [0, 3, 0, 0]],
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 3, 0]],
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 3]],
+    [[1, 1, 1, 1], [1, 3, 3, 1], [1, 1, 3, 3], [3, 1, 3, 1]],
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 0, 1], [0, 0, 1, 0]],
+    [[1, 1, 1, 1], [1, 3, 1, 3], [1, 3, 3, 1], [3, 3, 1, 1]],
+    [[1, 1, 1, 1], [1, 3, 1, 3], [1, 3, 3, 1], [1, 1, 3, 3]],
+    [[1, 1, 1, 1], [1, 3, 1, 3], [1, 1, 3, 3], [3, 1, 1, 3]],
+    [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0], [0, 0, 0, 1]],
+]
+
+
+def _fp2_const(k, p):
+    return [Fp2(0, 0, p), Fp2(1, 0, p), Fp2(0, 1, p), Fp2(-1, 0, p), Fp2(0, -1, p)][k]
+
+
+def splitting_matrix(null, p):
+    """Reference splitting_compute (verification path, no randomisation): find
+    the base-change matrix that turns the theta-null point into a product theta
+    point. Returns (matrix, count); a valid split has count == 1."""
+    count = 0
+    M = None
+    for i in range(10):
+        U = Fp2(0, 0, p)
+        for t in range(4):
+            prod = null[t ^ EVEN_INDEX[i][1]] * null[t]
+            if CHI_EVAL[EVEN_INDEX[i][0]][t] < 0:
+                prod = -prod
+            U = U + prod
+        if U.is_zero():
+            count += 1
+            M = [[_fp2_const(_SPLIT_IDX[i][r][c], p) for c in range(4)] for r in range(4)]
+    return M, count
+
+
+def elliptic_from_split(null):
+    """Reference theta_product_structure_to_elliptic_product: the A-coefficients
+    of the two Montgomery factors from a product theta-null point.
+    Returns (A1, A2); E_com is the first factor."""
+    x, y, z, t = null
+    x4 = (x * x) * (x * x)
+    y4 = (y * y) * (y * y)
+    z4 = (z * z) * (z * z)
+    A1 = -((x4 + z4) + (x4 + z4)) / (x4 - z4)
+    A2 = -((x4 + y4) + (x4 + y4)) / (x4 - y4)
+    return A1, A2
+
+
+# --------------------------------------------------------------------------
+# the whole chain
+# --------------------------------------------------------------------------
+def ecom_curve(inp, kb=None):
+    """Recompute the commitment curve ``E_com`` (as a :class:`Curve`) from the
+    verification inputs, via the full dimension-2 theta ``(2^n, 2^n)``-isogeny.
+    Returns ``None`` if the chain fails to split (should not happen for a valid
+    KAT signature)."""
+    p = PARAMS[inp.level][0]
+    if kb is None:
+        kb = commitment_kernel_bases(inp)
+    n = kb["pow_dim2"]
+    g = _gluing(kb, p)
+
+    # kernel generators as couple points (affine), full order 2^(n+2).
+    G1 = (kb["chall"]["P"], kb["aux"]["P"])
+    G2 = (kb["chall"]["Q"], kb["aux"]["Q"])
+    # push them through the gluing into theta coordinates on the codomain.
+    tG1 = gluing_eval_point(G1, g, p)
+    tG2 = gluing_eval_point(G2, g, p)
+
+    null = g.null
+    pc = precompute(null)
+    # n-1 further (2,2)-steps. Each is defined by the 8-torsion of the current
+    # kernel generators; we double them down, take the step, and push forward.
+    for i in range(n - 1):
+        order_exp = (n - 1 - i) + 2
+        T1_8 = double_iter(tG1, pc, order_exp - 3)
+        T2_8 = double_iter(tG2, pc, order_exp - 3)
+        step = i + 1  # global step index (gluing was step "1"); 1 .. n-1
+        if step == n - 2:      # penultimate
+            hb1, hb2 = 0, 0
+        elif step == n - 1:    # ultimate
+            hb1, hb2 = 1, 0
+        else:                  # generic
+            hb1, hb2 = 0, 1
+        null, sp, hb1, hb2 = theta_isogeny_compute(T1_8, T2_8, hb1, hb2)
+        tG1 = theta_eval(tG1, sp, hb1, hb2)
+        tG2 = theta_eval(tG2, sp, hb1, hb2)
+        pc = precompute(null)
+
+    M, count = splitting_matrix(null, p)
+    if count != 1:
+        return None
+    A1, _A2 = elliptic_from_split(apply_matrix(M, null))
+    return Curve(A1)
+
+
+def recompute_e_com(inp) -> str | None:
+    """The commitment-curve j-invariant (hex), or ``None`` if the chain does not
+    split. Directly comparable to the golden ``E_com``."""
+    fp_bytes = PARAMS[inp.level][1]
+    E = ecom_curve(inp)
+    return None if E is None else E.j_invariant().to_bytes(fp_bytes).hex()
+
+
+def crosscheck_e_com(vectors, level: int) -> CrossCheckResult:
+    """Recompute E_com for every vector that carries the inputs and compare to
+    the golden."""
+    total = matched = 0
+    mismatches = []
+    for v in vectors:
+        expected = v.get("E_com")
+        if expected is None or not v.get("sig") or not v.get("pk"):
+            continue
+        inp = inputs_from_hex(v["pk"], v["sig"], level)
+        got = recompute_e_com(inp)
+        total += 1
+        if got == expected:
+            matched += 1
+        else:
+            mismatches.append((v.get("index"), expected, got or "None"))
+    return CrossCheckResult(level, total, matched, mismatches)

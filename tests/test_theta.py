@@ -14,7 +14,13 @@ from pathlib import Path
 import pytest
 
 from sqvtrace.challenge import PARAMS, Fp2, inputs_from_hex
-from sqvtrace.theta import gluing_codomain, hadamard, to_squared_theta
+from sqvtrace.theta import (
+    crosscheck_e_com,
+    gluing_codomain,
+    hadamard,
+    recompute_e_com,
+    to_squared_theta,
+)
 
 VEC = Path(__file__).resolve().parents[1] / "vectors"
 
@@ -48,3 +54,26 @@ def test_to_squared_theta_matches_definition():
     p = PARAMS[1][0]
     P = (Fp2(2, 1, p), Fp2(0, 3, p), Fp2(5, 5, p), Fp2(4, 2, p))
     assert to_squared_theta(P) == hadamard(tuple(c * c for c in P))
+
+
+# --------------------------------------------------------------------------
+# E_com: the full dimension-2 theta (2^n, 2^n)-isogeny, end to end.
+# --------------------------------------------------------------------------
+@pytest.mark.parametrize("level", [1, 3, 5])
+def test_e_com_recompute_matches_golden(level):
+    v = _load(level)[0]
+    inp = inputs_from_hex(v["pk"], v["sig"], level)
+    assert recompute_e_com(inp) == v["E_com"]
+
+
+@pytest.mark.parametrize("level,n", [(1, 4), (3, 2), (5, 1)])
+def test_e_com_crosscheck_subset(level, n):
+    r = crosscheck_e_com(_load(level)[:n], level)
+    assert r.total == n
+    assert r.ok, r.mismatches[:3]
+
+
+def test_e_com_deterministic():
+    v = _load(1)[0]
+    inp = inputs_from_hex(v["pk"], v["sig"], 1)
+    assert recompute_e_com(inp) == recompute_e_com(inp) == v["E_com"]
