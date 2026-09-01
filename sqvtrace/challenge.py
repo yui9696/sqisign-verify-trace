@@ -430,6 +430,42 @@ def eval_even_strategy(A_aff, kernel, isog_len):
     return _A24_to_AC(A24)
 
 
+def _xeval_2(pts, K):
+    """Reference xeval_2: push x-only points through a 2-isogeny given its kps."""
+    Kx, Kz = K
+    out = []
+    for Qx, Qz in pts:
+        t0 = Qx + Qz
+        t1 = Qx - Qz
+        t2 = Kx * t1
+        t1 = Kz * t0
+        out.append((Qx * (t2 + t1), Qz * (t2 - t1)))
+    return out
+
+
+def eval_small_chain_A24(A_aff, ker, length, pts):
+    """Model-exact small 2^length-isogeny (reference ec_eval_small_chain): the
+    A24 = (A+2C : 4C) world with xisog_2 / xeval_2, converting AC_to_A24 at the
+    start and A24_to_AC at the end. Returns (codomain A-coefficient, images of
+    ``pts``). ``ker`` and each of ``pts`` are x-only (X, Z) pairs on the curve
+    ``A_aff`` (with C = 1). Matches the reference's codomain *model*, not just
+    its j-invariant, so a torsion basis built on the codomain comes out right."""
+    p = A_aff.p
+    A24 = (A_aff + Fp2(2, 0, p), Fp2(4, 0, p))  # AC_to_A24, C = 1 (unnormalized)
+    big_K = ker
+    pts = list(pts)
+    for i in range(length):
+        small_K = big_K
+        for _ in range(length - i - 1):
+            small_K = _xDBL_A24(small_K, A24)
+        Kx, Kz = small_K
+        A24 = (Kz * Kz - Kx * Kx, Kz * Kz)  # xisog_2 codomain A24
+        kps = (Kx + Kz, Kx - Kz)
+        big_K = _xeval_2([big_K], kps)[0]
+        pts = _xeval_2(pts, kps)
+    return _A24_to_AC(A24), pts
+
+
 # --------------------------------------------------------------------------
 # Full (x, y) Montgomery point arithmetic (B = 1). Used for the double-scalar
 # multiplication [a]P + [b]Q the reference does with ec_biscalar_mul when it
@@ -633,13 +669,15 @@ def commitment_kernel_bases(inp: Inputs):
     This is the first, verified step of ``E_com``; the theta ``(2,2)``-isogeny
     chain that consumes these bases is not implemented here.
 
-    The ``two_resp_length > 0`` case -- where ``B_chall_can`` lives on
-    ``E_chall_after_2resp`` and must be pushed through the 2-response isogeny --
-    is not yet reproduced and raises ``NotImplementedError``.
+    When ``two_resp_length > 0`` the challenge factor's basis is first built on
+    ``E_chall`` at order ``2**(order_exp + two_resp)`` and then pushed through the
+    model-exact 2-response isogeny, so it lands on ``E_chall_after_2resp`` at
+    order ``2**order_exp`` -- exactly as ``two_response_isogeny_verify`` does.
     """
     p, fp_bytes, f, cof, cofbits, sig_bytes, nb, sec = PARAMS[inp.level]
     resp_len = RESP_LEN[inp.level]
-    pow_dim2 = resp_len - inp.two_resp_length - inp.backtracking
+    two_resp = inp.two_resp_length
+    pow_dim2 = resp_len - two_resp - inp.backtracking
     order_exp = pow_dim2 + HD_EXTRA_TORSION
     one = Fp2(1, 0, p)
 
@@ -647,9 +685,9 @@ def commitment_kernel_bases(inp: Inputs):
         R = E.xdbl((x, one))
         return R[0] / R[1]
 
-    def _doubled_basis(E, hint):
+    def _doubled_basis(E, hint, ndbl):
         bP, bQ, bPmQ = _canonical_basis(E.A, E.a24, hint, cof, cofbits)
-        for _ in range(f - order_exp):
+        for _ in range(ndbl):
             bP, bQ, bPmQ = _xd(E, bP), _xd(E, bQ), _xd(E, bPmQ)
         return bP, bQ, bPmQ
 
@@ -663,34 +701,45 @@ def commitment_kernel_bases(inp: Inputs):
                 return Pf, (xQ, yq)
         raise RuntimeError("difference point does not match either y-sign of Q")
 
+    def _basis_from_triple(A, xP, xQ, xPmQ):
+        FC = FullCurve(A)
+        Pf, Qf = _pin(FC, xP, xQ, xPmQ)
+        return FC, Pf, Qf, FC.add(Pf, FC.neg(Qf))
+
     # --- auxiliary factor: canonical basis on E_aux, no change-of-basis matrix.
     Eaux = Curve(inp.A_aux)
-    FCa = FullCurve(inp.A_aux)
-    aP, aQ, aPmQ_x = _doubled_basis(Eaux, inp.hint_aux)
-    aPf, aQf = _pin(FCa, aP, aQ, aPmQ_x)
-    aPmQf = FCa.add(aPf, FCa.neg(aQf))
+    axP, axQ, axPmQ = _doubled_basis(Eaux, inp.hint_aux, f - order_exp)
+    _, aPf, aQf, aPmQf = _basis_from_triple(inp.A_aux, axP, axQ, axPmQ)
 
-    # --- challenge factor.
-    if inp.two_resp_length != 0:
-        raise NotImplementedError(
-            "commitment kernel for two_resp_length > 0 (B_chall_can lives on "
-            "E_chall_after_2resp) is not yet reproduced")
+    # --- challenge factor: build B_chall_can (post-matrix) on E_chall, at order
+    # 2**(order_exp + two_resp), then (if two_resp) push it through the 2-response
+    # isogeny to E_chall_after_2resp.
     Echall = _e_chall_curve(inp)
     FCc = FullCurve(Echall.A)
     a, c, b, d = inp.mat
-    cP, cQ, cPmQ_x = _doubled_basis(Echall, inp.hint_chall)
-    cPf, cQf = _pin(FCc, cP, cQ, cPmQ_x)
-    # B_chall_can via the reference's change-of-basis matrix:
-    #   P' = [a]P + [b]Q, Q' = [c]P + [d]Q, (P-Q)' = [a-c]P + [b-d]Q
-    bcP = FCc.add(FCc.mul(a, cPf), FCc.mul(b, cQf))
-    bcQ = FCc.add(FCc.mul(c, cPf), FCc.mul(d, cQf))
-    bcPmQ = FCc.add(bcP, FCc.neg(bcQ))  # (P - Q)' = [a-c]P + [b-d]Q
+    cxP, cxQ, cxPmQ = _doubled_basis(Echall, inp.hint_chall, f - order_exp - two_resp)
+    cPf, cQf = _pin(FCc, cxP, cxQ, cxPmQ)
+    # reference change-of-basis: P'=[a]P+[b]Q, Q'=[c]P+[d]Q, (P-Q)'=P'-Q'
+    P1 = FCc.add(FCc.mul(a, cPf), FCc.mul(b, cQf))
+    Q1 = FCc.add(FCc.mul(c, cPf), FCc.mul(d, cQf))
+    PmQ1 = FCc.add(P1, FCc.neg(Q1))
+
+    if two_resp == 0:
+        A_chall, bcP, bcQ, bcPmQ = Echall.A, P1, Q1, PmQ1
+    else:
+        # 2-response kernel: Q' if mat[0][0] and mat[1][0] both even, else P'.
+        ker_x = Q1[0] if (a % 2 == 0 and b % 2 == 0) else P1[0]
+        ker = Echall.ladder(1 << order_exp, (ker_x, one))  # order 2**two_resp
+        pts = [(P1[0], one), (Q1[0], one), (PmQ1[0], one)]
+        A_chall, imgs = eval_small_chain_A24(Echall.A, ker, two_resp, pts)
+        xs = [X / Z for (X, Z) in imgs]
+        _, bcP, bcQ, bcPmQ = _basis_from_triple(A_chall, xs[0], xs[1], xs[2])
 
     return {
         "pow_dim2": pow_dim2,
         "order_exp": order_exp,
         "aux": {"A": inp.A_aux, "P": aPf, "Q": aQf, "PmQ": aPmQf},
-        "chall": {"A": Echall.A, "P": bcP, "Q": bcQ, "PmQ": bcPmQ},
+        "chall": {"A": A_chall, "P": bcP, "Q": bcQ, "PmQ": bcPmQ},
     }
 
 

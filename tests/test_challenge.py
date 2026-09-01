@@ -13,6 +13,7 @@ import pytest
 
 from sqvtrace.challenge import (
     PARAMS,
+    Curve,
     FullCurve,
     commitment_kernel_bases,
     crosscheck_e_chall,
@@ -78,20 +79,7 @@ def test_wrong_challenge_changes_e_chall():
 # elsewhere; here we assert the intrinsic structure that any correct kernel
 # basis must have, with no reference data needed.
 # --------------------------------------------------------------------------
-def _first_two_resp0(level):
-    for v in _load(level):
-        inp = inputs_from_hex(v["pk"], v["sig"], level)
-        if inp.two_resp_length == 0:
-            return inp
-    return None
-
-
-@pytest.mark.parametrize("level", [1, 3, 5])
-def test_commitment_kernel_structure(level):
-    inp = _first_two_resp0(level)
-    if inp is None:
-        pytest.skip("no two_resp=0 vector at this level")
-    kb = commitment_kernel_bases(inp)
+def _check_structure(kb):
     oe = kb["order_exp"]
     for side in ("chall", "aux"):
         FC = FullCurve(kb[side]["A"])
@@ -108,13 +96,25 @@ def test_commitment_kernel_structure(level):
         assert FC.add(P, FC.neg(Q)) == PmQ, f"{side} P-Q != PmQ"
 
 
-def test_commitment_kernel_two_resp_not_implemented():
-    # The two_resp>0 challenge factor (B_chall_can on E_chall_after_2resp) is
-    # an explicit, honest boundary until it is reproduced against dumps.
+@pytest.mark.parametrize("level", [1, 3, 5])
+def test_commitment_kernel_structure(level):
+    # The first vector at each level (whatever its two_resp) yields a valid
+    # kernel basis: on-curve, exact order, consistent difference point.
+    inp = inputs_from_hex(_load(level)[0]["pk"], _load(level)[0]["sig"], level)
+    _check_structure(commitment_kernel_bases(inp))
+
+
+def test_commitment_kernel_two_resp_lands_on_after_2resp():
+    # For a two_resp>0 vector the challenge factor is pushed through the
+    # model-exact 2-response isogeny, so its curve is E_chall_after_2resp: its
+    # j-invariant must equal the golden E_chall_after_2resp.
+    fpb = PARAMS[1][1]
     for v in _load(1):
         inp = inputs_from_hex(v["pk"], v["sig"], 1)
-        if inp.two_resp_length > 0:
-            with pytest.raises(NotImplementedError):
-                commitment_kernel_bases(inp)
+        if inp.two_resp_length > 0 and "E_chall_after_2resp" in v:
+            kb = commitment_kernel_bases(inp)
+            _check_structure(kb)
+            j = Curve(kb["chall"]["A"]).j_invariant().to_bytes(fpb).hex()
+            assert j == v["E_chall_after_2resp"]
             return
     pytest.skip("no two-response vector found")

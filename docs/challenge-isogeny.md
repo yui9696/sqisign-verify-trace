@@ -168,10 +168,18 @@ stage had used `response_length = f − 2` where the reference constant is
 `126 / 192 / 253`. That was invisible to `E_chall_after_2resp` (both land on the
 same 2-response kernel) but wrong for the theta kernel's exact order.
 
-Only the `two_resp = 0` challenge factor is reproduced so far. When
-`two_resp > 0`, `B_chall_can` lives on `E_chall_after_2resp` and must be pushed
-through the 2-response isogeny first; `commitment_kernel_bases` raises
-`NotImplementedError` there rather than guess — that push, then the gluing step,
-are the next milestones. The theta `(2,2)`-isogeny chain (gluing → strategy of
-`(2,2)`-steps → splitting) that consumes these bases is not implemented yet, so
-`E_com` itself remains reference-observed.
+Both `two_resp` cases are handled. When `two_resp > 0`, `B_chall_can` is built on
+`E_chall` at order `2^(order_exp + two_resp)` and then pushed through the
+2-response isogeny, so it lands on `E_chall_after_2resp` at order `2^order_exp`
+— exactly as `two_response_isogeny_verify` does. That push is itself
+**model-exact**: it uses the reference's `ec_eval_small_chain` (the
+`A24 = (A+2C:4C)` world with `xisog_2` / `xeval_2`), so the codomain's
+A-coefficient — not just its j-invariant — matches, which is what makes the
+pushed basis land byte-for-byte on the reference's points. Verified against the
+`lift_basis` dump of a `two_resp = 1` vector (challenge `P` full X/Y/Z, `Q`
+affine x) and, across vectors, by tying the pushed curve's j-invariant to the
+golden `E_chall_after_2resp`.
+
+The theta `(2,2)`-isogeny chain (gluing → strategy of `(2,2)`-steps → splitting)
+that consumes these bases is not implemented yet, so `E_com` itself remains
+reference-observed. The gluing step is the next milestone.
