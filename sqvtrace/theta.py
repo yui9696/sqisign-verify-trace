@@ -339,33 +339,81 @@ def ecom_curve(inp, kb=None):
         kb = commitment_kernel_bases(inp)
     n = kb["pow_dim2"]
     g = _gluing(kb, p)
+    E1 = FullCurve(kb["chall"]["A"])
+    E2 = FullCurve(kb["aux"]["A"])
 
-    # kernel generators as couple points (affine), full order 2^(n+2).
-    G1 = (kb["chall"]["P"], kb["aux"]["P"])
-    G2 = (kb["chall"]["Q"], kb["aux"]["Q"])
-    # push them through the gluing into theta coordinates on the codomain.
-    tG1 = gluing_eval_point(G1, g, p)
-    tG2 = gluing_eval_point(G2, g, p)
+    def double_couple(cp, k):
+        p1, p2 = cp
+        for _ in range(k):
+            p1 = E1.add(p1, p1)
+            p2 = E2.add(p2, p2)
+        return (p1, p2)
+
+    # The chain of n (2,2)-steps is traversed with the reference's balanced
+    # strategy (theta_isogenies.c ``_theta_chain_compute_impl``): a stack of
+    # kernel-point checkpoints is doubled down toward the 8-torsion and pushed
+    # forward through each step, giving O(n log n) instead of the naive O(n²) of
+    # re-doubling a single generator every step. Any valid strategy yields the
+    # same codomain; ``todo[j]`` tracks how far each checkpoint still is from the
+    # active step.
+    space = 1
+    i = 1
+    while i < n:
+        i *= 2
+        space += 1
+    todo = [0] * space
+    todo[0] = n  # n - 2 + HD_extra_torsion, with HD_extra_torsion = 2
+    current = 0
+
+    # --- gluing phase: build couple-point checkpoints down to the 8-torsion.
+    jacQ1 = [None] * space
+    jacQ2 = [None] * space
+    jacQ1[0] = (kb["chall"]["P"], kb["aux"]["P"])
+    jacQ2[0] = (kb["chall"]["Q"], kb["aux"]["Q"])
+    while todo[current] != 1:
+        current += 1
+        prev = todo[current - 1]
+        num = prev // 2 if prev >= 16 else prev - 1  # reference's gluing rule
+        jacQ1[current] = double_couple(jacQ1[current - 1], num)
+        jacQ2[current] = double_couple(jacQ2[current - 1], num)
+        todo[current] = prev - num
+
+    # the gluing step itself is `g`; push the checkpoints j < current through it.
+    thetaQ1 = [None] * space
+    thetaQ2 = [None] * space
+    for j in range(current):
+        thetaQ1[j] = gluing_eval_point(jacQ1[j], g, p)
+        thetaQ2[j] = gluing_eval_point(jacQ2[j], g, p)
+        todo[j] -= 1
+    current -= 1
 
     null = g.null
     pc = precompute(null)
-    # n-1 further (2,2)-steps. Each is defined by the 8-torsion of the current
-    # kernel generators; we double them down, take the step, and push forward.
-    for i in range(n - 1):
-        order_exp = (n - 1 - i) + 2
-        T1_8 = double_iter(tG1, pc, order_exp - 3)
-        T2_8 = double_iter(tG2, pc, order_exp - 3)
-        step = i + 1  # global step index (gluing was step "1"); 1 .. n-1
-        if step == n - 2:      # penultimate
+
+    # --- the remaining (2,2)-steps, in theta coordinates.
+    i = 1
+    while current >= 0 and todo[current]:
+        while todo[current] != 1:
+            current += 1
+            prev = todo[current - 1]
+            num = prev // 2
+            thetaQ1[current] = double_iter(thetaQ1[current - 1], pc, num)
+            thetaQ2[current] = double_iter(thetaQ2[current - 1], pc, num)
+            todo[current] = prev - num
+        if i == n - 2:      # penultimate step: standard-in, dual-out
             hb1, hb2 = 0, 0
-        elif step == n - 1:    # ultimate
+        elif i == n - 1:    # ultimate step: dual-in, standard-out
             hb1, hb2 = 1, 0
-        else:                  # generic
+        else:               # generic step
             hb1, hb2 = 0, 1
-        null, sp, hb1, hb2 = theta_isogeny_compute(T1_8, T2_8, hb1, hb2)
-        tG1 = theta_eval(tG1, sp, hb1, hb2)
-        tG2 = theta_eval(tG2, sp, hb1, hb2)
+        null, sp, hb1, hb2 = theta_isogeny_compute(thetaQ1[current], thetaQ2[current], hb1, hb2)
         pc = precompute(null)
+        for j in range(current):
+            thetaQ1[j] = theta_eval(thetaQ1[j], sp, hb1, hb2)
+            thetaQ2[j] = theta_eval(thetaQ2[j], sp, hb1, hb2)
+            todo[j] -= 1
+        current -= 1
+        i += 1
 
     M, count = splitting_matrix(null, p)
     if count != 1:

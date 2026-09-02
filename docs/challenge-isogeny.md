@@ -209,15 +209,14 @@ projective scalar it is only defined up to**, on both a `two_resp = 0` and a
 With the gluing in hand, the rest of the dimension-2 theta `(2ⁿ,2ⁿ)`-isogeny is
 reproduced in [`sqvtrace/theta.py`](../sqvtrace/theta.py) and `E_com` comes out:
 
-- **The chain.** After the gluing, the two kernel generators are pushed into
+- **The chain.** After the gluing, the kernel-point checkpoints are pushed into
   theta coordinates (`gluing_eval_point`, via the reference's cross-addition
-  components). Then `n-1` further `(2,2)`-steps run: each step is defined by the
-  8-torsion of the current generators (obtained by theta doubling,
-  `double_point`), computes the codomain theta-null point
-  (`theta_isogeny_compute`), and pushes the generators forward (`theta_eval`).
-  The reference's standard/dual-coordinate flags for the last two steps are
-  followed. This is `O(n²)` rather than the reference's `O(n log n)` strategy —
-  simpler, and the codomain is identical.
+  components). Then `n-1` further `(2,2)`-steps run, traversed with the
+  reference's **balanced `O(n log n)` strategy**: a stack of checkpoints is
+  doubled down toward the 8-torsion (`double_point`) and pushed through each step
+  (`theta_eval`), rather than re-doubling one generator every step. Each step
+  computes the codomain theta-null point (`theta_isogeny_compute`); the
+  reference's standard/dual-coordinate flags for the last two steps are followed.
 - **Splitting.** The final theta-null point is normalised to a product theta
   point by the reference's `splitting_compute` (the `EVEN_INDEX` / `CHI_EVAL` /
   `SPLITTING_TRANSFORMS` tables, verification path, no randomisation), and read

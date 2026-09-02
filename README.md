@@ -116,8 +116,9 @@ And it is run over the **whole committed set, not a subset**: every one of the
 **`E_com` 300/300**, `E_chall` 300/300, `E_aux` 300/300, and
 `E_chall_after_2resp` 166/166 (the vectors that have that stage), with zero
 mismatches. The measured results are in
-[`docs/reproduction.md`](docs/reproduction.md). The pure-Python chain is `O(n²)`
-and heavy (~21 min for the full sweep), so the CLI takes a `--limit` for quick
+[`docs/reproduction.md`](docs/reproduction.md). The pure-Python chain follows the
+reference's balanced `O(n log n)` strategy, but it is still heavy in pure Python
+(a few seconds per vector at level 5), so the CLI takes a `--limit` for quick
 checks.
 
 ## A complete pure-Python verifier
