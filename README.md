@@ -23,22 +23,41 @@ It is the white-box sibling of
 > Not a break, not a vulnerability, not an attack. A white-box debugging and
 > interoperability aid for a non-production reference implementation.
 
-## The key point: verification is deterministic (signing is not)
+> ### Status: this repository targets round 2 (`dd133d7`)
+>
+> SQIsign's **round-3** release landed on 2026-09-01 (`6d01770`, tag `nist-v3`,
+> specification v3.0). It changes verification materially: the parameter sets moved up
+> a security level, the `backtracking` and `two_resp_length` signature bytes are gone
+> along with the whole `E_chall_after_2resp` stage (so verification has **three** curve
+> stages, not four), `hash_to_challenge` collapsed to a single SHAKE256 that absorbs the
+> Montgomery **A**-coefficient rather than the j-invariant, and a `NormalizeMatrix`
+> canonicity check was added. The vectors and verifier here remain valid for round 2 and
+> are being ported. Round-3 golden vectors already exist and are cross-checked; see the
+> port notes below.
 
-SQIsign **signing** uses floating-point lattice reduction (LLL). Two correct
-implementations can produce different — but individually valid — signatures for
-the same message. The spec says so (§3.1.2). That is exactly why a KAT
-*signature* cannot be reproduced by an alternative implementation, and why the
-KATs can only be replayed input-to-verdict.
+## The key point: verification is deterministic
 
-SQIsign **verification** has no such freedom. Given `(pk, msg, sig)`, every
-intermediate curve is mathematically determined, and its **j-invariant is a
-canonical field element**. Encode it with the spec's canonical `fp2` encoding
-and you get a canonical byte string. So **a correct alternative verifier must
-compute the same intermediate j-invariants.**
+Given `(pk, msg, sig)`, every curve SQIsign's verifier computes on the way to a verdict
+is **mathematically determined** — there is no search, no sampling and no choice
+anywhere in the procedure. So each of those curves has a canonical invariant: its
+j-invariant is a single field element, independent of any model or coordinate choice.
+Encode it with the spec's canonical `fp2` encoding and you get a canonical byte string.
+**A correct alternative verifier must therefore land on the same intermediate values.**
 
-That is what makes these usable as interop golden vectors: they are
-implementation-independent *exactly where the KAT signatures are not*. See
+That is the whole argument, and it rests only on verification being deterministic.
+
+The NIST KAT files, by contrast, pin only *input → verdict*: a KAT record cannot tell you
+where a disagreeing verifier first went wrong. Nor is a KAT *signature* something an
+alternative implementation can be expected to regenerate — signing is randomised, and
+under round 2 the specification went further and said so explicitly (v2.0.1 §3.1.2: the
+floating-point lattice reduction in signing makes it "challenging for an alternative
+implementation … to exactly reproduce the Known Answer Tests"). **Round 3 removed
+floating point from signing entirely**, and v3.0 §1.4 now says the new lattice reduction's
+canonical forms simplify "reproducibility of test vectors", so that particular argument is
+specific to round 2 and should not be carried forward. Nothing above depends on it.
+
+That is what makes these usable as interop golden vectors: they say *where* two verifiers
+diverge, which a verdict alone never can. See
 [`docs/why-verification-is-deterministic.md`](docs/why-verification-is-deterministic.md).
 
 ### This is not just an argument — one stage is independently reproduced
@@ -255,6 +274,28 @@ python -m pytest -q
 
 The Python package (`sqvtrace/`) has no runtime dependencies. CI runs the test
 suite on Python 3.11/3.12/3.13 and never builds the C reference.
+
+## Round 3: what already exists, and what the port still needs
+
+Round 3 (`6d01770`, tag `nist-v3`, spec v3.0, 2026-09-01) rewrote verification.
+`SQIsign.Verify` is now spec Algorithm 3.24, fourteen lines, with the `backtracking` and
+`two_resp_length` bytes and the two-response isogeny removed, all chain lengths fixed at
+compile time, and a `NormalizeMatrix` canonicity check on the change-of-basis matrix.
+
+Done, at all three round-3 parameter sets (`p324_3`, `p500_27`, `p664_17`):
+
+- **Golden vectors: 300**, 100 per parameter set, every one `verdict = 1`, with 100
+  distinct `E_com` values per set. Because round 3 removed j-invariants from the
+  reference entirely — Algorithm 3.3 hashes `CurveToMontgomeryA(E)` — each stage is
+  recorded as the canonical **A**-coefficient, with the j-invariant derived from it.
+- **`E_aux` stage**, recomputed in pure Python from the signature's own field: 300/300.
+- **The Fiat–Shamir check**, recomputed in pure Python from the specification text alone
+  (a single SHAKE256 over `"SQI" ‖ A(E_pk) ‖ hint_pk ‖ A(E_com) ‖ msg`, squeezed to λ
+  bits — round 2 used `SHAKE256_122 ∘ SHAKE256_256^63`): **300/300 on the first run.**
+
+Still to port: `E_chall`, which needs round 3's `TorsionBasisFromHint` and the new
+isogeny formulas, and `E_com`, where the existing dimension-2 theta chain should mostly
+carry over at the new primes.
 
 ## Honest limitations
 

@@ -1,22 +1,30 @@
-# Why verification intermediates are golden vectors (and KAT signatures are not)
+# Why verification intermediates are golden vectors
 
-The short version: **signing is non-deterministic, verification is
-deterministic.** That asymmetry is the whole reason this project can exist.
+The short version: **verification is deterministic**, so every curve it computes is a
+mathematically determined object with a canonical invariant. That is the whole reason
+this project can exist, and it is the only thing the argument needs.
 
-## Signing is non-deterministic
+## What the KAT files can and cannot do
 
-The SQIsign signing procedure searches for a short quaternion element using
-lattice reduction (LLL) carried out in floating point. Two correct
-implementations — or the same implementation on two machines, or two compilers —
-can legitimately land on different short vectors, and therefore emit different
-(but individually valid) signatures for the same message and key.
+The NIST Known-Answer-Test `.rsp` files record `(pk, msg, sig)` triples. You feed one to
+*your* verifier and check that it accepts. That is a verdict, and a verdict is all you
+get: when two verifiers disagree, a KAT record cannot tell you which stage they first
+diverged at. The KATs pin **input → verdict**, nothing in between. Filling in the
+"in between" is what this project does.
 
-The specification says as much (§3.1.2 of the round-2 spec): the signing
-transcript is not reproducible across implementations. This is exactly why the
-NIST Known-Answer-Test (KAT) `.rsp` files can only be used one way: you feed the
-recorded `(pk, msg, sig)` triple to *your* verifier and check that it accepts.
-You cannot ask your *signer* to reproduce the recorded `sig`. The KATs pin
-**input → verdict**, nothing in between.
+You also cannot expect your *signer* to reproduce a recorded `sig`: signing is
+randomised, so a different but equally valid signature is the normal outcome.
+
+> **A round-2 argument that no longer holds, and never carried any weight here.**
+> Under round 2 the specification went further than "randomised": v2.0.1 §3.1.2 said the
+> floating-point lattice reduction in signing made it "challenging for an alternative
+> implementation of SQIsign to exactly reproduce the Known Answer Tests" — reproducibility
+> was not merely unnecessary, it was out of reach. **Round 3 removed floating point from
+> signing entirely.** v3.0 §1.4 says the new lattice reduction enforces canonical forms
+> that simplify "reproducibility of test vectors and enable the possibility of
+> deterministic signatures", and the v2.0.1 §3.1.2 caveat has no counterpart in v3.0.
+> So that framing was specific to round 2 and is not carried forward. Nothing below
+> depends on it: the case for these vectors rests on verification's determinism alone.
 
 ## Verification is deterministic
 
@@ -33,7 +41,7 @@ curve in the Deuring pipeline is a mathematically determined object:
 5. `chk_chall` — the challenge scalar recomputed as
    `hash_to_challenge(pk, E_com, msg)`.
 
-None of these involve a search or a floating-point choice. Each curve is
+None of these involves a search or a choice of any kind. Each curve is
 determined up to isomorphism, and its **j-invariant is a canonical invariant of
 that isomorphism class** — a single element of the field, independent of any
 model or coordinate choice. Encoding that element with the specification's
@@ -41,8 +49,16 @@ canonical `fp2` encoding (little-endian, the encoding the reference's own
 `fp2_encode` produces) yields a canonical byte string.
 
 Therefore **a correct alternative verifier must compute the same intermediate
-j-invariants.** They are implementation-independent — precisely where the KAT
-signatures are not.
+j-invariants.** They are implementation-independent, and they localise a disagreement
+to a stage — which a verdict never can.
+
+> **Round 3 (`6d01770`, spec v3.0, 2026-09-01).** The list above is round 2's.
+> Round 3 drops the two-response isogeny, so stage 3 no longer exists and verification
+> has three curve stages. It also removes j-invariants from the reference altogether:
+> spec Algorithm 3.3 hashes `CurveToMontgomeryA(E)`, so the Montgomery **A**-coefficient
+> is the value the protocol pins, and for `E_com` it is necessarily identical across
+> correct verifiers — otherwise the Fiat-Shamir check could not match. The reasoning in
+> this document is unchanged; only which canonical value one records changes.
 
 ## What that buys us
 

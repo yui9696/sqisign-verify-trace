@@ -46,12 +46,11 @@ the invariant that must agree is the j-invariant *as a field element*.
 
 ## What this establishes
 
-SQIsign **verification is deterministic** (signing is not — it uses
-floating-point lattice reduction), so every intermediate curve is
+SQIsign **verification is deterministic**, so every intermediate curve is
 mathematically determined and its j-invariant is a canonical field element.
 These vectors make that concrete: an independent pure-Python verifier lands on
 the reference's exact intermediate j-invariants, at all four stages, for all 300
-KAT vectors. They are usable as interoperability golden vectors *precisely where
-the KAT signatures are not* — see
+KAT vectors. That is what makes them usable as interoperability golden vectors:
+a KAT record yields a verdict, while these localise a disagreement to a stage — see
 [`why-verification-is-deterministic.md`](why-verification-is-deterministic.md)
 and [`challenge-isogeny.md`](challenge-isogeny.md) for the stage-by-stage recipe.
