@@ -292,10 +292,17 @@ Done, at all three round-3 parameter sets (`p324_3`, `p500_27`, `p664_17`):
 - **The Fiat–Shamir check**, recomputed in pure Python from the specification text alone
   (a single SHAKE256 over `"SQI" ‖ A(E_pk) ‖ hint_pk ‖ A(E_com) ‖ msg`, squeezed to λ
   bits — round 2 used `SHAKE256_122 ∘ SHAKE256_256^63`): **300/300 on the first run.**
+- **The `E_chall` stage: 300/300**, matching the reference's Montgomery
+  **A**-coefficient rather than only its j-invariant, since the next stage needs the
+  exact model. That covers spec Algorithm 3.24 lines 5–8: `TorsionBasisFromHint`, the
+  3-point ladder, the 4-isogeny chain with the reference's splitting strategy, and round
+  3's new `ec_theta_to_montgomery`, which makes the codomain model canonical by taking
+  the lexicographically largest of six candidate A-coefficients.
 
-Still to port: `E_chall`, which needs round 3's `TorsionBasisFromHint` and the new
-isogeny formulas, and `E_com`, where the existing dimension-2 theta chain should mostly
-carry over at the new primes.
+Still to port: **`E_com`**, the dimension-2 theta chain. Round 3 rewrote it — `gluing.c`
+and `splitting.c` are new files and `theta_isogenies.c` was largely replaced — so the
+round-2 implementation in [`sqvtrace/theta.py`](sqvtrace/theta.py) does not carry over
+as-is.
 
 ## Honest limitations
 
