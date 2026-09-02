@@ -11,10 +11,10 @@ the result compared byte-for-byte to the committed golden:
 
 | level | `E_aux` | `E_chall` | `E_chall_after_2resp` | `E_com` | time |
 |-------|---------|-----------|-----------------------|---------|------|
-| 1     | 100/100 | 100/100   | 52/52                 | 100/100 | 83 s |
-| 3     | 100/100 | 100/100   | 61/61                 | 100/100 | 317 s |
-| 5     | 100/100 | 100/100   | 53/53                 | 100/100 | 873 s |
-| **all** | **300/300** | **300/300** | **166/166** | **300/300** | ~21 min |
+| 1     | 100/100 | 100/100   | 52/52                 | 100/100 | 53 s |
+| 3     | 100/100 | 100/100   | 61/61                 | 100/100 | 196 s |
+| 5     | 100/100 | 100/100   | 53/53                 | 100/100 | 509 s |
+| **all** | **300/300** | **300/300** | **166/166** | **300/300** | ~13 min |
 
 `E_chall_after_2resp` is only present when the signature has a 2-response stage
 (`two_resp_length > 0`); the counts above are over exactly those vectors. Every
